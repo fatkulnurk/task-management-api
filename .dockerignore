@@ -1,0 +1,6 @@
+.git
+.idea
+deploy
+cover
+coverage
+*.md
