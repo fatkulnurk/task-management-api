@@ -7,7 +7,6 @@ const (
 	Forbidden                  = "forbidden"
 	NotFound                   = "not_found"
 	Conflict                   = "conflict"
-	IdempotencyKeyReused       = "idempotency_key_reused"
 	OwnerCannotBeRemoved       = "owner_cannot_be_removed"
 	UserAlreadyTeamMember      = "user_already_team_member"
 	MemberHasActiveAssignments = "member_has_active_assignments"
