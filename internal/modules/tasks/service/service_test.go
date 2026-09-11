@@ -3,8 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -48,8 +46,8 @@ func TestCreate(t *testing.T) {
 					Member(gomock.Any(), "team-1", "user-1").
 					Return(true, nil)
 				repository.EXPECT().
-					CreateIdempotent(gomock.Any(), gomock.Any(), "user-1", "0123456789abcdef0123456789abcdef", gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, task domain.Task, _ string, _ string, requestHash string, body []byte) (domain.CreateOutput, error) {
+					CreateIdempotent(gomock.Any(), gomock.Any(), "user-1", "0123456789abcdef0123456789abcdef", gomock.Any()).
+					DoAndReturn(func(_ context.Context, task domain.Task, _ string, _ string, body []byte) (domain.CreateOutput, error) {
 						if task.CreatorID != "user-1" {
 							t.Errorf("creator id = %q, want %q", task.CreatorID, "user-1")
 						}
@@ -59,8 +57,11 @@ func TestCreate(t *testing.T) {
 						if task.Title != "Prepare report" || task.Description != "Weekly" {
 							t.Errorf("task not normalized: %+v", task)
 						}
-						if len(requestHash) != 64 {
-							t.Errorf("request hash length = %d, want 64", len(requestHash))
+						if task.CreatedAt == "" || task.UpdatedAt == "" {
+							t.Error("task timestamps must not be empty")
+						}
+						if task.CreatedAt != task.UpdatedAt {
+							t.Errorf("created at %q != updated at %q", task.CreatedAt, task.UpdatedAt)
 						}
 						return domain.CreateOutput{Status: 201, Body: body}, nil
 					})
@@ -114,7 +115,7 @@ func TestCreate(t *testing.T) {
 					Member(gomock.Any(), "team-1", "user-1").
 					Return(true, nil)
 				repository.EXPECT().
-					CreateIdempotent(gomock.Any(), gomock.Any(), "user-1", "0123456789abcdef0123456789abcdef", gomock.Any(), gomock.Any()).
+					CreateIdempotent(gomock.Any(), gomock.Any(), "user-1", "0123456789abcdef0123456789abcdef", gomock.Any()).
 					Return(domain.CreateOutput{}, errTest)
 			},
 			wantError: errTest,
@@ -580,9 +581,8 @@ func TestAssign(t *testing.T) {
 }
 
 type fakeIdempotencyRecord struct {
-	requestHash string
-	status      int
-	body        []byte
+	status int
+	body   []byte
 }
 
 type fakeRepository struct {
@@ -599,18 +599,15 @@ func (repository *fakeRepository) Member(context.Context, string, string) (bool,
 	return true, nil
 }
 
-func (repository *fakeRepository) CreateIdempotent(_ context.Context, task domain.Task, userID, key, requestHash string, body []byte) (domain.CreateOutput, error) {
+func (repository *fakeRepository) CreateIdempotent(_ context.Context, task domain.Task, userID, key string, body []byte) (domain.CreateOutput, error) {
 	repository.mutex.Lock()
 	defer repository.mutex.Unlock()
 	recordKey := userID + "|" + key
 	if record, ok := repository.records[recordKey]; ok {
-		if record.requestHash != requestHash {
-			return domain.CreateOutput{}, domain.ErrIdempotencyKeyReused
-		}
 		return domain.CreateOutput{Status: record.status, Body: record.body, Replay: true}, nil
 	}
 	repository.tasks++
-	repository.records[recordKey] = fakeIdempotencyRecord{requestHash: requestHash, status: 201, body: body}
+	repository.records[recordKey] = fakeIdempotencyRecord{status: 201, body: body}
 	return domain.CreateOutput{Status: 201, Body: body}, nil
 }
 
@@ -718,7 +715,7 @@ func TestCreateConcurrentIdempotency(t *testing.T) {
 	}
 }
 
-func TestCreateSameKeyDifferentPayload(t *testing.T) {
+func TestCreateSameKeyDifferentPayloadReplaysFirst(t *testing.T) {
 	repository := newFakeRepository()
 	taskService := &taskService{Repository: repository}
 
@@ -733,18 +730,26 @@ func TestCreateSameKeyDifferentPayload(t *testing.T) {
 		Task:           domain.Task{TeamID: "team-1", Title: "Different title", Description: "Weekly", Status: "todo"},
 	}
 
-	if _, err := taskService.Create(context.Background(), first); err != nil {
+	firstOutput, err := taskService.Create(context.Background(), first)
+	if err != nil {
 		t.Fatalf("first create error: %v", err)
 	}
-	if _, err := taskService.Create(context.Background(), second); !errors.Is(err, domain.ErrIdempotencyKeyReused) {
-		t.Fatalf("error = %v, want ErrIdempotencyKeyReused", err)
+	secondOutput, err := taskService.Create(context.Background(), second)
+	if err != nil {
+		t.Fatalf("second create error: %v", err)
+	}
+	if !secondOutput.Replay {
+		t.Error("second create must be a replay")
+	}
+	if !bytes.Equal(firstOutput.Body, secondOutput.Body) {
+		t.Errorf("bodies differ: %s != %s", firstOutput.Body, secondOutput.Body)
 	}
 	if repository.tasks != 1 {
 		t.Errorf("tasks = %d, want 1", repository.tasks)
 	}
 }
 
-func TestRequestHashMatchesBody(t *testing.T) {
+func TestCreateResponseBodyMatchesTask(t *testing.T) {
 	repository := newFakeRepository()
 	taskService := &taskService{Repository: repository}
 	input := domain.CreateInput{
@@ -761,22 +766,11 @@ func TestRequestHashMatchesBody(t *testing.T) {
 	if err := json.Unmarshal(output.Body, &decoded); err != nil {
 		t.Fatalf("failed to decode response body: %v", err)
 	}
-	requestBody, err := json.Marshal(struct {
-		TeamID      string `json:"team_id"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Status      string `json:"status"`
-	}{"team-1", "Prepare report", "Weekly", "todo"})
-	if err != nil {
-		t.Fatalf("failed to marshal request body: %v", err)
-	}
-	sum := sha256.Sum256(requestBody)
-	expectedHash := hex.EncodeToString(sum[:])
-	if repository.records["user-1|0123456789abcdef0123456789abcdef"].requestHash != expectedHash {
-		t.Errorf("request hash mismatch")
-	}
 	if decoded.CreatorID != "user-1" {
 		t.Errorf("creator id = %q, want %q", decoded.CreatorID, "user-1")
+	}
+	if decoded.Title != "Prepare report" || decoded.Status != "todo" {
+		t.Errorf("task = %+v, want the created task", decoded)
 	}
 }
 
