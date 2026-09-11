@@ -23,7 +23,11 @@ type envelope struct {
 func write(responseWriter stdhttp.ResponseWriter, status int, value any) {
 	responseWriter.Header().Set("Content-Type", "application/json")
 	responseWriter.WriteHeader(status)
-	_ = json.NewEncoder(responseWriter).Encode(value)
+	body, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	_, _ = responseWriter.Write(body)
 }
 
 func JSONResponse2xx(responseWriter stdhttp.ResponseWriter, status int, value any) {

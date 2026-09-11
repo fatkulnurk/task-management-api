@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"taskmanagement/internal/application/errorcode"
 	"taskmanagement/internal/application/notification"
 	"taskmanagement/internal/modules/tasks/domain"
 	"taskmanagement/internal/platform/id"
+	"time"
 )
 
 type taskService struct {
@@ -30,6 +29,9 @@ func (taskService *taskService) Create(ctx context.Context, input domain.CreateI
 	task.Title = strings.TrimSpace(task.Title)
 	task.Description = strings.TrimSpace(task.Description)
 	task.Status = strings.TrimSpace(task.Status)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	task.CreatedAt = now
+	task.UpdatedAt = now
 	isMember, err := taskService.Repository.Member(ctx, task.TeamID, userID)
 	if err != nil {
 		return domain.CreateOutput{}, err
@@ -39,24 +41,13 @@ func (taskService *taskService) Create(ctx context.Context, input domain.CreateI
 		return domain.CreateOutput{}, domain.ErrForbidden
 	}
 
-	requestBody, err := json.Marshal(struct {
-		TeamID      string `json:"team_id"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Status      string `json:"status"`
-	}{task.TeamID, task.Title, task.Description, task.Status})
-	if err != nil {
-		return domain.CreateOutput{}, err
-	}
-
-	requestHash := sha256.Sum256(requestBody)
 	task.CreatorID = userID
 	task.ID = id.New()
 	responseBody, err := json.Marshal(task)
 	if err != nil {
 		return domain.CreateOutput{}, err
 	}
-	return taskService.Repository.CreateIdempotent(ctx, task, userID, idempotencyKey, hex.EncodeToString(requestHash[:]), responseBody)
+	return taskService.Repository.CreateIdempotent(ctx, task, userID, idempotencyKey, responseBody)
 }
 
 func (taskService *taskService) List(ctx context.Context, input domain.ListInput) ([]domain.Task, int, error) {

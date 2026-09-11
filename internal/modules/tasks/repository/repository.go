@@ -6,11 +6,18 @@ import (
 	"errors"
 	"taskmanagement/internal/application/errorcode"
 	"taskmanagement/internal/modules/tasks/domain"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 )
 
-const CreateEndpoint = "POST /tasks"
+func mysqlDateTime(value string) any {
+	parsed, err := time.Parse("2006-01-02T15:04:05Z", value)
+	if err != nil {
+		return value
+	}
+	return parsed.Format("2006-01-02 15:04:05")
+}
 
 type mySQLTaskRepository struct{ Database *sql.DB }
 
@@ -31,11 +38,11 @@ func (taskRepository *mySQLTaskRepository) Member(ctx context.Context, teamID, u
 }
 
 const (
-	deleteIdempotencyQuery = "DELETE FROM idempotency_keys WHERE user_id=? AND endpoint=? AND idempotency_key=?"
-	insertTaskQuery        = "INSERT INTO tasks(id,team_id,creator_id,title,description,status,created_at,updated_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))"
+	deleteIdempotencyQuery = "DELETE FROM idempotency_keys WHERE user_id=? AND idempotency_key=?"
+	insertTaskQuery        = "INSERT INTO tasks(id,team_id,creator_id,title,description,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)"
 	insertTaskLogQuery     = "INSERT INTO task_logs(task_id,actor_id,action,changes,created_at) VALUES(?,?,?,JSON_OBJECT(),UTC_TIMESTAMP(6))"
-	insertIdempotencyQuery = "INSERT INTO idempotency_keys(user_id,endpoint,idempotency_key,task_id,request_hash,response_status,response_body,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 24 HOUR),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))"
-	selectIdempotencyQuery = "SELECT request_hash,response_status,response_body,expires_at<=UTC_TIMESTAMP(6) FROM idempotency_keys WHERE user_id=? AND endpoint=? AND idempotency_key=?"
+	insertIdempotencyQuery = "INSERT INTO idempotency_keys(user_id,idempotency_key,response_status,response_body,expires_at,created_at) VALUES(?,?,?,?,DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 24 HOUR),UTC_TIMESTAMP(6))"
+	selectIdempotencyQuery = "SELECT response_status,response_body,expires_at<=UTC_TIMESTAMP(6) FROM idempotency_keys WHERE user_id=? AND idempotency_key=?"
 )
 
 const maxCreateAttempts = 5
@@ -43,16 +50,15 @@ const maxCreateAttempts = 5
 var errDuplicateKey = errors.New("duplicate idempotency key")
 
 type storedIdempotency struct {
-	RequestHash string
-	Status      int
-	Body        []byte
-	Expired     bool
+	Status  int
+	Body    []byte
+	Expired bool
 }
 
-func (taskRepository *mySQLTaskRepository) lookupIdempotency(ctx context.Context, userID, endpoint, key string) (storedIdempotency, bool, error) {
+func (taskRepository *mySQLTaskRepository) lookupIdempotency(ctx context.Context, userID, key string) (storedIdempotency, bool, error) {
 	var stored storedIdempotency
 	var expired int
-	err := taskRepository.Database.QueryRowContext(ctx, selectIdempotencyQuery, userID, endpoint, key).Scan(&stored.RequestHash, &stored.Status, &stored.Body, &expired)
+	err := taskRepository.Database.QueryRowContext(ctx, selectIdempotencyQuery, userID, key).Scan(&stored.Status, &stored.Body, &expired)
 	if errors.Is(err, sql.ErrNoRows) {
 		return stored, false, nil
 	}
@@ -63,43 +69,52 @@ func (taskRepository *mySQLTaskRepository) lookupIdempotency(ctx context.Context
 	return stored, true, nil
 }
 
-func (taskRepository *mySQLTaskRepository) CreateIdempotent(ctx context.Context, task domain.Task, userID, key, requestHash string, body []byte) (domain.CreateOutput, error) {
+func (taskRepository *mySQLTaskRepository) CreateIdempotent(ctx context.Context, task domain.Task, userID, key string, body []byte) (domain.CreateOutput, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxCreateAttempts; attempt++ {
-		result, err := taskRepository.createIdempotentAttempt(ctx, task, userID, key, requestHash, body)
-		if err == nil {
-			return result, nil
-		}
-
-		if isRetryableLockError(err) {
-			lastErr = err
-			continue
-		}
-		if !errors.Is(err, errDuplicateKey) {
-			return domain.CreateOutput{}, err
-		}
-		stored, found, err := taskRepository.lookupIdempotency(ctx, userID, CreateEndpoint, key)
+		result, found, err := taskRepository.replayIdempotent(ctx, userID, key)
 		if err != nil {
 			return domain.CreateOutput{}, err
 		}
-		if !found || stored.Expired {
-			lastErr = errDuplicateKey
-			continue
-		}
-		if stored.RequestHash != requestHash {
-			return domain.CreateOutput{}, domain.ErrIdempotencyKeyReused
+		if found {
+			return result, nil
 		}
 
-		return domain.CreateOutput{
-			Status: stored.Status,
-			Body:   stored.Body,
-			Replay: true,
-		}, nil
+		result, err = taskRepository.insertTaskIdempotent(ctx, task, userID, key, body)
+		if err == nil {
+			return result, nil
+		}
+		if isRetryableLockError(err) || errors.Is(err, errDuplicateKey) {
+			lastErr = err
+			continue
+		}
+		return domain.CreateOutput{}, err
 	}
 	if lastErr != nil {
 		return domain.CreateOutput{}, lastErr
 	}
 	return domain.CreateOutput{}, errDuplicateKey
+}
+
+func (taskRepository *mySQLTaskRepository) replayIdempotent(ctx context.Context, userID, key string) (domain.CreateOutput, bool, error) {
+	stored, found, err := taskRepository.lookupIdempotency(ctx, userID, key)
+	if err != nil {
+		return domain.CreateOutput{}, false, err
+	}
+	if !found {
+		return domain.CreateOutput{}, false, nil
+	}
+	if stored.Expired {
+		if _, err = taskRepository.Database.ExecContext(ctx, deleteIdempotencyQuery, userID, key); err != nil {
+			return domain.CreateOutput{}, false, err
+		}
+		return domain.CreateOutput{}, false, nil
+	}
+	return domain.CreateOutput{
+		Status: stored.Status,
+		Body:   stored.Body,
+		Replay: true,
+	}, true, nil
 }
 
 func isRetryableLockError(err error) bool {
@@ -110,41 +125,20 @@ func isRetryableLockError(err error) bool {
 	return mysqlErr.Number == 1213 || mysqlErr.Number == 1205
 }
 
-func (taskRepository *mySQLTaskRepository) createIdempotentAttempt(ctx context.Context, task domain.Task, userID, key, requestHash string, body []byte) (domain.CreateOutput, error) {
-	stored, found, err := taskRepository.lookupIdempotency(ctx, userID, CreateEndpoint, key)
-	if err != nil {
-		return domain.CreateOutput{}, err
-	}
-	if found {
-		if !stored.Expired {
-			if stored.RequestHash != requestHash {
-				return domain.CreateOutput{}, domain.ErrIdempotencyKeyReused
-			}
-			return domain.CreateOutput{
-				Status: stored.Status,
-				Body:   stored.Body,
-				Replay: true,
-			}, nil
-		}
-		if _, err = taskRepository.Database.ExecContext(ctx, deleteIdempotencyQuery, userID, CreateEndpoint, key); err != nil {
-			return domain.CreateOutput{}, err
-		}
-	}
-
+func (taskRepository *mySQLTaskRepository) insertTaskIdempotent(ctx context.Context, task domain.Task, userID, key string, body []byte) (domain.CreateOutput, error) {
 	tx, err := taskRepository.Database.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.CreateOutput{}, err
 	}
 	defer tx.Rollback()
 
-	if _, err = tx.ExecContext(ctx, insertTaskQuery, task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status); err != nil {
+	if _, err = tx.ExecContext(ctx, insertTaskQuery, task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status, mysqlDateTime(task.CreatedAt), mysqlDateTime(task.UpdatedAt)); err != nil {
 		return domain.CreateOutput{}, err
 	}
 	if _, err = tx.ExecContext(ctx, insertTaskLogQuery, task.ID, task.CreatorID, errorcode.TaskCreated); err != nil {
 		return domain.CreateOutput{}, err
 	}
-	_, err = tx.ExecContext(ctx, insertIdempotencyQuery, userID, CreateEndpoint, key, task.ID, requestHash, 201, body)
-	if err != nil {
+	if _, err = tx.ExecContext(ctx, insertIdempotencyQuery, userID, key, 201, body); err != nil {
 		var mysqlErr *mysql.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
 			return domain.CreateOutput{}, errDuplicateKey

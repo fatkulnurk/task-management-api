@@ -4,7 +4,7 @@ import "context"
 
 type Repository interface {
 	Member(context.Context, string, string) (bool, error)
-	CreateIdempotent(context.Context, Task, string, string, string, []byte) (CreateOutput, error)
+	CreateIdempotent(context.Context, Task, string, string, []byte) (CreateOutput, error)
 	List(context.Context, string, string, string, string, int, int) ([]Task, int, error)
 	Get(context.Context, string, string) (Task, error)
 	Update(context.Context, Task, string) error

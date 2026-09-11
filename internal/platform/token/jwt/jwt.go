@@ -2,8 +2,9 @@ package jwt
 
 import (
 	"context"
-	"github.com/golang-jwt/jwt/v5"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type TokenService struct {
@@ -29,7 +30,9 @@ func (tokenService *TokenService) Issue(_ context.Context, userID string) (strin
 }
 
 func (tokenService *TokenService) Verify(_ context.Context, rawToken string) (string, error) {
-	claimsToken, err := jwt.Parse(rawToken, func(_ *jwt.Token) (any, error) { return tokenService.secret, nil }, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
+	claimsToken, err := jwt.Parse(rawToken, func(_ *jwt.Token) (any, error) {
+		return tokenService.secret, nil
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil || !claimsToken.Valid {
 		return "", jwt.ErrTokenInvalidClaims
 	}

@@ -6,20 +6,20 @@ The API is written in Go 1.27. It uses chi for routes, MySQL for data, JWT for l
 
 ## Settings
 
-Copy `.env.example` to `.env`. The file `.env` loads by itself when you run the app. Then apply `migrations/001..008` in order. Apply the `.up` files first. Do not apply any `.down` file. Then run `go run ./cmd/api`.
+Copy `.env.example` to `.env`. Compose and the app read it. It is the one place for every setting.
 
-| Variable | Default | Notes |
+| Variable | Example | Notes |
 |---|---|---|
-| `APP_ADDR` | `:8080` | The address the API listens on |
-| `DATABASE_URL` | — | The MySQL DSN, for example `user:password@tcp(127.0.0.1:3306)/taskmanagement?parseTime=true` |
-| `JWT_SECRET` | — | Required. Use at least 32 characters. The app will not start without it |
-| `DB_MAX_OPEN_CONNS` | `25` | A whole number greater than zero |
-| `DB_MAX_IDLE_CONNS` | `10` | A whole number. It cannot be more than the max open |
-| `DB_CONN_MAX_LIFETIME` | `30m` | A Go duration |
-| `DB_CONN_MAX_IDLE_TIME` | `5m` | A Go duration |
-| `DB_PING_TIMEOUT` | `5s` | A Go duration |
+| `JWT_SECRET` | — | Required. Use at least 32 characters. The app will not start without it. Make one with `make jwt-secret` or `scripts\generate-jwt-secret.ps1` |
+| `DATABASE_URL` | `taskmanagement:taskmanagement@tcp(mysql:3306)/taskmanagement?parseTime=true` | The MySQL DSN. Inside Compose the host is `mysql` |
+| `MYSQL_ROOT_PASSWORD` | `rootpassword` | The MySQL root password |
+| `MYSQL_DATABASE` | `taskmanagement` | The database name |
+| `MYSQL_USER` | `taskmanagement` | The MySQL user |
+| `MYSQL_PASSWORD` | `taskmanagement` | The MySQL password |
+| `API_PORT` | `44001` | The host port for the API, bound to `127.0.0.1` |
+| `MYSQL_PORT` | `44002` | The host port for MySQL, bound to `127.0.0.1` |
 
-You do not need `.env` if the settings are already in the environment. Docker Compose does this. The app never changes a setting that is already set.
+The app reads `APP_ADDR` too. It defaults to `:8080`, which matches the container. The `DB_*` pool settings (`DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_LIFETIME`, `DB_CONN_MAX_IDLE_TIME`, `DB_PING_TIMEOUT`) are optional and have defaults. You do not have to set them.
 
 ## How the code is organized
 
@@ -43,38 +43,74 @@ internal/modules/<module>/
 
 Shared code lives in `internal/platform`. The token contract is in `internal/application/token`, and the JWT code is in `internal/platform/token/jwt`. The HTTP helpers are in `internal/platform/http`. They keep the error format the same for all errors. They also collect all validation errors in one response.
 
+The parts follow one direction:
+
+```text
+adapter/api  ->  service  ->  domain  <-  repository
+```
+
+- `domain` knows only the data and the errors. It has no SQL and no HTTP.
+- `service` knows the rules. It uses the `domain` interfaces.
+- `repository` knows MySQL. `adapter/api` knows HTTP.
+- A module does not import another module. `teams` and `tasks` meet only through the database and the shared packages.
+- `cmd/api/main.go` is the only place that builds the parts and joins them.
+
 ## Run with Docker
 
 The API image is built in two steps with alpine. It is about 26MB. The database is MySQL 9.7.2.
 
+Start the stack:
+
 ```text
 docker compose up -d --build
-docker compose down
-docker compose down -v
 ```
 
-- The API uses host port `44001`. MySQL uses host port `44002`.
-- On the first start, MySQL applies `migrations/001..008` (the schema and the test data). It reads them from `/docker-entrypoint-initdb.d`.
-- `down` stops the stack. `down -v` also deletes the data. The init scripts run only when the data folder is empty. So use `down -v` after you change a migration or the test data.
-- The settings are in `.env.example` (`MYSQL_*`, `API_PORT`, `MYSQL_PORT`, `JWT_SECRET`).
+Stop the stack:
 
-Before the first start, copy the settings file. Compose reads it by itself:
+```text
+docker compose down
+```
+
+- The API uses host port `44001`. MySQL uses host port `44002`. Both bind to `127.0.0.1`, so they are not open on the network.
+- A `migrate` service applies `migrations/001..008` (the schema and the test data) before the API starts. It uses `migrate/migrate` and keeps its place in a `schema_migrations` table.
+- Each migration runs one time only. When you add a new file, the next `up` applies only the new file. You keep your data.
+- `down` stops the stack. `down -v` also deletes the data. Use `down -v` only to reset everything from zero.
+- The app reads every setting from `.env` through `env_file`. The file is required.
+- `JWT_SECRET` has no default. The app exits when it is empty.
+
+Before the first start, copy the settings file and set the secret (on PowerShell use `Copy-Item .env.example .env`):
 
 ```text
 cp .env.example .env
+# Put a value in JWT_SECRET. Make one with `make jwt-secret`.
+docker compose up -d --build
 ```
 
-You can also set a value in the shell. The shell value wins over `.env`:
+## Quick start
 
-```text
-$env:JWT_SECRET="change-me-to-a-long-secret"; docker compose up -d
-```
+The folder `postman/` has a collection. Import it:
 
-Or point Compose at the file by hand:
+1. Open Postman.
+2. Click Import.
+3. Choose `postman/task-management-api.postman_collection.json`.
 
-```text
-docker compose --env-file .env up -d
-```
+Then run the requests from top to bottom: Health, Auth, Teams, Tasks, Cleanup.
+
+The collection keeps its own variables. It does the link work for you:
+
+- `base_url` is `http://localhost:44001`.
+- `POST /auth/login` saves the access token and the refresh token.
+- `POST /teams` saves the new `team_id`.
+- `POST /tasks` saves the new `task_id`.
+
+Start with `POST /auth/login`. It uses a seed user: `alice@fatkulnurk.com` with password `password`. After that, the Teams and Tasks requests have a token.
+
+Two requests in the Tasks folder show idempotency:
+
+- `POST /tasks` uses a new key each run, so it makes a new task.
+- `POST /tasks (same key - replay)` uses a fixed key. The first run makes a task; later runs return that first task and no duplicate.
+
+Run `Cleanup` last. It removes the member, and a member with an active task assignment cannot be removed.
 
 ## Test data
 
@@ -90,33 +126,44 @@ It also makes 2 teams, 5 team memberships, 7 tasks (1 is soft-deleted), and 11 t
 
 All endpoints need `Authorization: Bearer <access_token>`, except `GET /health` and the `auth` routes.
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Checks that the app is alive. Returns `204` |
-| `POST` | `/auth/register` | Makes a new user |
-| `POST` | `/auth/login` | Logs in and returns an access token and a refresh token |
-| `POST` | `/auth/refresh` | Gives a new refresh token |
-| `POST` | `/auth/logout` | Deletes the refresh token you send |
-| `POST` | `/teams` | Makes a new team |
-| `GET` | `/teams` | Lists your teams |
-| `GET` | `/teams/{id}` | Shows one team |
-| `GET` | `/teams/{id}/members` | Lists the members of a team |
-| `POST` | `/teams/{id}/members` | Adds a user by `user_id` or `email` |
-| `DELETE` | `/teams/{id}/members/{user_id}` | Removes a member who is not the owner |
-| `POST` | `/tasks` | Makes a new task |
-| `GET` | `/tasks` | Lists tasks |
-| `GET` | `/tasks/{id}` | Shows one task |
-| `PUT` | `/tasks/{id}` | Changes a task |
-| `DELETE` | `/tasks/{id}` | Soft-deletes a task |
-| `POST` | `/tasks/{id}/assign` | Assigns or unassigns a task |
+| Method | Path | Status | Description |
+|---|---|---|---|
+| `GET` | `/health` | `204` | Checks that the app is alive |
+| `POST` | `/auth/register` | `201` | Makes a new user |
+| `POST` | `/auth/login` | `200` | Logs in and returns an access token and a refresh token |
+| `POST` | `/auth/refresh` | `200` | Gives a new token pair |
+| `POST` | `/auth/logout` | `204` | Deletes the refresh token you send |
+| `POST` | `/teams` | `201` | Makes a new team |
+| `GET` | `/teams` | `200` | Lists your teams |
+| `GET` | `/teams/{id}` | `200` | Shows one team |
+| `GET` | `/teams/{id}/members` | `200` | Lists the members of a team |
+| `POST` | `/teams/{id}/members` | `201` | Adds a user by `user_id` or `email` |
+| `DELETE` | `/teams/{id}/members/{user_id}` | `204` | Removes a member who is not the owner |
+| `POST` | `/tasks` | `201` | Makes a new task |
+| `GET` | `/tasks` | `200` | Lists tasks |
+| `GET` | `/tasks/{id}` | `200` | Shows one task |
+| `PUT` | `/tasks/{id}` | `200` | Changes a task |
+| `DELETE` | `/tasks/{id}` | `204` | Soft-deletes a task |
+| `POST` | `/tasks/{id}/assign` | `200` | Assigns or unassigns a task |
 
 The team endpoints are extra. They exist because every task belongs to a team. The `POST /tasks/{id}/assign` endpoint needs a team. It assigns a task to a user in the same team.
+
+### Auth requests
+
+```text
+POST /auth/register   {"name":"Dewi","email":"dewi@example.com","password":"password123"}
+POST /auth/login      {"email":"alice@fatkulnurk.com","password":"password"}
+POST /auth/refresh    {"refresh_token":"<REFRESH_TOKEN>"}
+POST /auth/logout     {"refresh_token":"<REFRESH_TOKEN>"}
+```
+
+The password must have 8 characters or more. The email must be unique. `login` and `refresh` give a token pair.
 
 ### `POST /tasks`
 
 You must send an `Idempotency-Key` header. The value must be a UUID.
 
-If you send the same request again with the same key, you get the same answer. No new task is made. This works for 24 hours. If the body is different, you get `409`.
+If you send the same request again with the same key, you get the same answer and no new task is made, even when the body is different. This works for 24 hours.
 
 ```text
 Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
@@ -152,15 +199,41 @@ This project meets that rule. The endpoint does three things in one database tra
 
 If one step fails, all the steps roll back. The database never keeps a half-done change.
 
+## Who can do what
+
+You need a token for every `/tasks` and `/teams` route. `GET /health` and the `auth` routes do not need one.
+
+Tasks:
+
+- The creator can read, change, delete, and assign the task.
+- The assignee can read the task and change only the `status`.
+- Other users cannot see the task.
+
+Teams:
+
+- The owner can add and remove members.
+- A member can read the team and its members.
+
+If you are not part of a task or a team, the API answers `404`. It does not answer `403`. This way a stranger cannot learn that the resource exists. The API answers `403` only when you can see the resource but the action is not yours.
+
+## Security notes
+
+- The password is stored with bcrypt. The API never stores the plain password.
+- The access token is a JWT. It uses `HS256` and always has an `exp`. The secret must be 32 characters or more.
+- The refresh token is a random string. The database stores only its hash. Each `refresh` gives a new refresh token and drops the old one. `logout` drops it too.
+- An idempotency key is private to one user. The stored response is counted per user and key.
+
 ## Errors and logs
 
 All errors use the same JSON format:
 
 ```json
-{"status":409,"code":"idempotency_key_reused","message":"unable to create task","timestamp":"2026-09-10T10:00:00Z"}
+{"status":404,"code":"not_found","message":"task not found","timestamp":"2026-09-10T10:00:00Z"}
 ```
 
 Validation errors also have an `errors` array. Each item has `field`, `code`, and `message`. The status codes are: `400` for bad input, `401` for no valid token, `403` for not allowed, `404` for not found or hidden, `409` for a conflict, `422` for a validation error, and `500` for an internal error.
+
+Some errors carry a specific `code`: `user_already_team_member` (`409`), `owner_cannot_be_removed` (`403`), and `member_has_active_assignments` (`409`).
 
 Every response has an `X-Request-Id` header. The value is a UUID. If you send a valid UUID in the `X-Request-Id` header, the API uses it. If not, the API makes a new one. The API writes one JSON log line for each request. The line has `request_id`, `method`, `path`, `status`, and `latency`. The log level is INFO for 2xx and 3xx, WARN for 4xx, and ERROR for 5xx. If the code panics, the API logs the stack trace at ERROR. The response never shows the stack trace.
 

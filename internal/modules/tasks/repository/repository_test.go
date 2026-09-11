@@ -26,6 +26,18 @@ func newRepository(t *testing.T) (domain.Repository, sqlmock.Sqlmock) {
 	return NewMySQLTaskRepository(database), mock
 }
 
+func TestMySQLDateTime(t *testing.T) {
+	if got := mysqlDateTime("2026-09-10T10:00:00Z"); got != "2026-09-10 10:00:00" {
+		t.Errorf("got %v, want 2026-09-10 10:00:00", got)
+	}
+	if got := mysqlDateTime(""); got != "" {
+		t.Errorf("got %v, want empty string", got)
+	}
+	if got := mysqlDateTime("not-a-date"); got != "not-a-date" {
+		t.Errorf("got %v, want the input unchanged", got)
+	}
+}
+
 func TestRepositoryMember(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -86,24 +98,23 @@ func TestRepositoryMember(t *testing.T) {
 }
 
 func TestRepositoryCreateIdempotent(t *testing.T) {
-	task := domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Prepare report", Description: "Weekly", Status: "todo"}
+	task := domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Prepare report", Description: "Weekly", Status: "todo", CreatedAt: "2026-09-10T10:00:00Z", UpdatedAt: "2026-09-10T10:00:00Z"}
 	body := []byte(`{"id":"task-1"}`)
-	requestHash := "hash-1"
 
 	lookupNoRows := func(mock sqlmock.Sqlmock) {
 		mock.ExpectQuery(selectIdempotencyQuery).
-			WithArgs("user-1", CreateEndpoint, "key-1").
+			WithArgs("user-1", "key-1").
 			WillReturnError(sql.ErrNoRows)
 	}
-	lookupStored := func(mock sqlmock.Sqlmock, hash string, expired int) {
+	lookupStored := func(mock sqlmock.Sqlmock, expired int) {
 		mock.ExpectQuery(selectIdempotencyQuery).
-			WithArgs("user-1", CreateEndpoint, "key-1").
-			WillReturnRows(sqlmock.NewRows([]string{"request_hash", "response_status", "response_body", "expired"}).
-				AddRow(hash, 201, body, expired))
+			WithArgs("user-1", "key-1").
+			WillReturnRows(sqlmock.NewRows([]string{"response_status", "response_body", "expired"}).
+				AddRow(201, body, expired))
 	}
 	insertTaskAndLog := func(mock sqlmock.Sqlmock) {
 		mock.ExpectExec(insertTaskQuery).
-			WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status).
+			WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status, "2026-09-10 10:00:00", "2026-09-10 10:00:00").
 			WillReturnResult(sqlmock.NewResult(1, 1))
 		mock.ExpectExec(insertTaskLogQuery).
 			WithArgs(task.ID, task.CreatorID, "task_created").
@@ -111,14 +122,13 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 	}
 	insertIdempotency := func(mock sqlmock.Sqlmock) {
 		mock.ExpectExec(insertIdempotencyQuery).
-			WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+			WithArgs("user-1", "key-1", 201, body).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
 
 	tests := []struct {
 		name         string
 		key          string
-		hash         string
 		setup        func(mock sqlmock.Sqlmock)
 		wantStatus   int
 		wantReplay   bool
@@ -128,7 +138,6 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "success",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
@@ -141,9 +150,8 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "replay existing",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
-				lookupStored(mock, requestHash, 0)
+				lookupStored(mock, 0)
 			},
 			wantStatus: 201,
 			wantReplay: true,
@@ -151,11 +159,10 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "expired key",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
-				lookupStored(mock, requestHash, 1)
+				lookupStored(mock, 1)
 				mock.ExpectExec(deleteIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1").
+					WithArgs("user-1", "key-1").
 					WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectBegin()
 				insertTaskAndLog(mock)
@@ -165,21 +172,11 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 			wantStatus: 201,
 		},
 		{
-			name: "key reused with different payload",
-			key:  "key-1",
-			hash: "other-hash",
-			setup: func(mock sqlmock.Sqlmock) {
-				lookupStored(mock, requestHash, 0)
-			},
-			wantError: domain.ErrIdempotencyKeyReused,
-		},
-		{
 			name: "lookup fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery(selectIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1").
+					WithArgs("user-1", "key-1").
 					WillReturnError(errTest)
 			},
 			wantError: errTest,
@@ -187,11 +184,10 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "delete expired fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
-				lookupStored(mock, requestHash, 1)
+				lookupStored(mock, 1)
 				mock.ExpectExec(deleteIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1").
+					WithArgs("user-1", "key-1").
 					WillReturnError(errTest)
 			},
 			wantError: errTest,
@@ -199,7 +195,6 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "begin fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin().WillReturnError(errTest)
@@ -209,12 +204,11 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "insert task fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				mock.ExpectExec(insertTaskQuery).
-					WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status).
+					WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status, "2026-09-10 10:00:00", "2026-09-10 10:00:00").
 					WillReturnError(errTest)
 				mock.ExpectRollback()
 			},
@@ -223,12 +217,11 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "insert log fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				mock.ExpectExec(insertTaskQuery).
-					WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status).
+					WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status, "2026-09-10 10:00:00", "2026-09-10 10:00:00").
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec(insertTaskLogQuery).
 					WithArgs(task.ID, task.CreatorID, "task_created").
@@ -240,13 +233,12 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "insert idempotency fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				insertTaskAndLog(mock)
 				mock.ExpectExec(insertIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+					WithArgs("user-1", "key-1", 201, body).
 					WillReturnError(errTest)
 				mock.ExpectRollback()
 			},
@@ -255,16 +247,15 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "duplicate on insert idempotency",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				insertTaskAndLog(mock)
 				mock.ExpectExec(insertIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+					WithArgs("user-1", "key-1", 201, body).
 					WillReturnError(&mysql.MySQLError{Number: 1062, Message: "duplicate entry"})
 				mock.ExpectRollback()
-				lookupStored(mock, requestHash, 0)
+				lookupStored(mock, 0)
 			},
 			wantStatus: 201,
 			wantReplay: true,
@@ -272,7 +263,6 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "commit fails",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
@@ -285,16 +275,15 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "deadlock then replay",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				insertTaskAndLog(mock)
 				mock.ExpectExec(insertIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+					WithArgs("user-1", "key-1", 201, body).
 					WillReturnError(&mysql.MySQLError{Number: 1213, Message: "deadlock"})
 				mock.ExpectRollback()
-				lookupStored(mock, requestHash, 0)
+				lookupStored(mock, 0)
 			},
 			wantStatus: 201,
 			wantReplay: true,
@@ -302,13 +291,12 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "lock wait timeout then retry succeeds",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				lookupNoRows(mock)
 				mock.ExpectBegin()
 				insertTaskAndLog(mock)
 				mock.ExpectExec(insertIdempotencyQuery).
-					WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+					WithArgs("user-1", "key-1", 201, body).
 					WillReturnError(&mysql.MySQLError{Number: 1205, Message: "lock wait timeout"})
 				mock.ExpectRollback()
 				lookupNoRows(mock)
@@ -322,17 +310,15 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "duplicate errors exhausted",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				for attempt := 0; attempt < maxCreateAttempts; attempt++ {
 					lookupNoRows(mock)
 					mock.ExpectBegin()
 					insertTaskAndLog(mock)
 					mock.ExpectExec(insertIdempotencyQuery).
-						WithArgs("user-1", CreateEndpoint, "key-1", task.ID, requestHash, 201, body).
+						WithArgs("user-1", "key-1", 201, body).
 						WillReturnError(&mysql.MySQLError{Number: 1062, Message: "duplicate entry"})
 					mock.ExpectRollback()
-					lookupNoRows(mock)
 				}
 			},
 			wantError: errDuplicateKey,
@@ -340,13 +326,12 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 		{
 			name: "retryable errors exhausted",
 			key:  "key-1",
-			hash: requestHash,
 			setup: func(mock sqlmock.Sqlmock) {
 				for attempt := 0; attempt < maxCreateAttempts; attempt++ {
 					lookupNoRows(mock)
 					mock.ExpectBegin()
 					mock.ExpectExec(insertTaskQuery).
-						WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status).
+						WithArgs(task.ID, task.TeamID, task.CreatorID, task.Title, task.Description, task.Status, "2026-09-10 10:00:00", "2026-09-10 10:00:00").
 						WillReturnError(&mysql.MySQLError{Number: 1213, Message: "deadlock"})
 					mock.ExpectRollback()
 				}
@@ -360,7 +345,7 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 			repository, mock := newRepository(t)
 			test.setup(mock)
 
-			output, err := repository.CreateIdempotent(context.Background(), task, "user-1", test.key, test.hash, body)
+			output, err := repository.CreateIdempotent(context.Background(), task, "user-1", test.key, body)
 			if test.wantAnyError {
 				if err == nil {
 					t.Fatal("expected an error, got nil")
@@ -384,6 +369,30 @@ func TestRepositoryCreateIdempotent(t *testing.T) {
 				t.Errorf("unmet expectations: %v", err)
 			}
 		})
+	}
+}
+
+func TestRepositoryCreateIdempotentReplayReturnsStoredBody(t *testing.T) {
+	repository, mock := newRepository(t)
+	storedBody := []byte(`{"id":"task-original"}`)
+	mock.ExpectQuery(selectIdempotencyQuery).
+		WithArgs("user-1", "key-1").
+		WillReturnRows(sqlmock.NewRows([]string{"response_status", "response_body", "expired"}).
+			AddRow(201, storedBody, 0))
+
+	task := domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Different title", Status: "todo"}
+	output, err := repository.CreateIdempotent(context.Background(), task, "user-1", "key-1", []byte(`{"id":"a new body"}`))
+	if err != nil {
+		t.Fatalf("error = %v, want nil", err)
+	}
+	if !output.Replay {
+		t.Error("expected a replay")
+	}
+	if string(output.Body) != string(storedBody) {
+		t.Errorf("body = %s, want the stored body %s", output.Body, storedBody)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -104,17 +105,6 @@ func TestHandlerCreate(t *testing.T) {
 				service.EXPECT().Create(gomock.Any(), gomock.Any()).Times(0)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
-		},
-		{
-			name:           "idempotency key reused",
-			body:           `{"team_id":"team-1","title":"Prepare report","status":"todo"}`,
-			idempotencyKey: validIdempotencyKey,
-			setup: func(service *domainmocks.MockService) {
-				service.EXPECT().
-					Create(gomock.Any(), gomock.Any()).
-					Return(domain.CreateOutput{}, domain.ErrIdempotencyKeyReused)
-			},
-			wantStatus: http.StatusConflict,
 		},
 		{
 			name:           "forbidden",
@@ -588,6 +578,45 @@ func TestHandlerAssign(t *testing.T) {
 			}
 			if test.wantBody != "" && !strings.Contains(recorder.Body.String(), test.wantBody) {
 				t.Errorf("body = %s, want it to contain %q", recorder.Body.String(), test.wantBody)
+			}
+		})
+	}
+}
+
+func TestHandlerErrorCode(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantCode  string
+		wantState int
+	}{
+		{name: "forbidden", err: domain.ErrForbidden, wantCode: "forbidden", wantState: http.StatusForbidden},
+		{name: "not found", err: domain.ErrNotFound, wantCode: "not_found", wantState: http.StatusNotFound},
+		{name: "invalid", err: domain.ErrInvalid, wantCode: "invalid_request", wantState: http.StatusUnprocessableEntity},
+		{name: "unknown", err: errTest, wantCode: "internal_error", wantState: http.StatusInternalServerError},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler, service := newTaskHandler(t)
+			service.EXPECT().
+				Assign(gomock.Any(), gomock.Any()).
+				Return(domain.Task{}, test.err)
+
+			recorder := httptest.NewRecorder()
+			handler.assign(recorder, taskRequest(http.MethodPost, "/tasks/"+validTaskID+"/assign", `{"assignee_id":"abcdefabcdefabcdefabcdefabcdefab"}`, "user-1", "", map[string]string{"id": validTaskID}))
+
+			if recorder.Code != test.wantState {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantState)
+			}
+			var envelope struct {
+				Code string `json:"code"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+				t.Fatalf("failed to decode error envelope: %v", err)
+			}
+			if envelope.Code != test.wantCode {
+				t.Errorf("code = %q, want %q", envelope.Code, test.wantCode)
 			}
 		})
 	}

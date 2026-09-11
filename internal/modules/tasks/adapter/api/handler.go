@@ -19,27 +19,17 @@ func userID(request *http.Request) string {
 	return identity.UserID
 }
 
-func status(err error) int {
-	if errors.Is(err, domain.ErrIdempotencyKeyReused) {
-		return 409
+func classify(err error) (int, string) {
+	switch {
+	case errors.Is(err, domain.ErrForbidden):
+		return 403, errorcode.Forbidden
+	case errors.Is(err, domain.ErrNotFound):
+		return 404, errorcode.NotFound
+	case errors.Is(err, domain.ErrInvalid):
+		return 422, errorcode.InvalidRequest
+	default:
+		return 500, errorcode.InternalError
 	}
-	if errors.Is(err, domain.ErrForbidden) {
-		return 403
-	}
-	if errors.Is(err, domain.ErrNotFound) {
-		return 404
-	}
-	if errors.Is(err, domain.ErrInvalid) {
-		return 422
-	}
-	return 500
-}
-
-func code(err error) string {
-	if errors.Is(err, domain.ErrIdempotencyKeyReused) {
-		return "idempotency_key_reused"
-	}
-	return errorcode.InvalidRequest
 }
 
 func (h TaskHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -67,10 +57,11 @@ func (h TaskHandler) create(w http.ResponseWriter, r *http.Request) {
 		Task:           task,
 	})
 	if err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), code(err), "unable to create task")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "unable to create task")
 		}
 		return
 	}
@@ -126,10 +117,11 @@ func (h TaskHandler) list(w http.ResponseWriter, r *http.Request) {
 		Limit:  listRequest.Limit,
 	})
 	if err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), errorcode.InvalidRequest, "unable to list tasks")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "unable to list tasks")
 		}
 		return
 	}
@@ -152,10 +144,11 @@ func (h TaskHandler) get(w http.ResponseWriter, r *http.Request) {
 		UserID: userID(r),
 	})
 	if err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), errorcode.NotFound, "task not found")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "task not found")
 		}
 		return
 	}
@@ -187,10 +180,11 @@ func (h TaskHandler) update(w http.ResponseWriter, r *http.Request) {
 		Task:   task,
 	})
 	if err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), errorcode.InvalidRequest, "unable to update task")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "unable to update task")
 		}
 		return
 	}
@@ -205,10 +199,11 @@ func (h TaskHandler) delete(w http.ResponseWriter, r *http.Request) {
 		TaskID: chi.URLParam(r, "id"),
 		UserID: userID(r),
 	}); err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), errorcode.NotFound, "task not found")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "task not found")
 		}
 		return
 	}
@@ -233,10 +228,11 @@ func (h TaskHandler) assign(w http.ResponseWriter, r *http.Request) {
 		TargetUserID: assignRequest.AssigneeID,
 	})
 	if err != nil {
-		if status(err) >= 500 {
-			phttp.JSONResponse5xx(w, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(w, statusCode)
 		} else {
-			phttp.JSONResponse4xx(w, status(err), errorcode.Forbidden, "unable to assign task")
+			phttp.JSONResponse4xx(w, statusCode, errorCode, "unable to assign task")
 		}
 		return
 	}
