@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,33 +24,54 @@ import (
 )
 
 func main() {
-	_ = godotenv.Load()
+	slog.SetDefault(logger.New(os.Stdout))
+
+	if err := godotenv.Load(); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Info("dotenv file not found; using environment variables")
+		} else {
+			slog.Error("dotenv", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("configuration", "error", err)
 		os.Exit(1)
 	}
-	database, err := database.Open(cfg.Database)
+
+	databaseInstance, err := database.Open(cfg.Database)
 	if err != nil {
 		slog.Error("database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
+	defer databaseInstance.Close()
+
+	loggerInstance := slog.Default()
 	tokenService := jwtservice.New(cfg.JWTSecret)
-	router := chi.NewRouter()
-	loggerInstance := logger.New(os.Stdout)
 	notificationService := platformnotification.NewLogger(loggerInstance)
+
+	router := chi.NewRouter()
 	router.Use(apphttp.Stack(tokenService, loggerInstance))
-	router.Get("/health", func(responseWriter http.ResponseWriter, _ *http.Request) { responseWriter.WriteHeader(204) })
-	auth.New(database, tokenService).RegisterRoutes(router)
+
+	router.Get("/health", func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.WriteHeader(http.StatusNoContent)
+	})
+
+	auth.New(databaseInstance, tokenService).RegisterRoutes(router)
+
 	authenticate := apphttp.Authenticate(tokenService)
-	teams.New(database).RegisterRoutes(router, authenticate)
-	tasks.New(database, notificationService).RegisterRoutes(router, authenticate)
+	teams.New(databaseInstance).RegisterRoutes(router, authenticate)
+	tasks.New(databaseInstance, notificationService).RegisterRoutes(router, authenticate)
+
 	server := apphttp.NewServer(cfg.Addr, router)
 	go server.ListenAndServe()
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.ShutdownSeconds)*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
