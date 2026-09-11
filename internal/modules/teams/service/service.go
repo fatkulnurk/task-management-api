@@ -5,6 +5,7 @@ import (
 	"strings"
 	"taskmanagement/internal/modules/teams/domain"
 	"taskmanagement/internal/platform/id"
+	"time"
 )
 
 type teamService struct{ Repository domain.Repository }
@@ -17,10 +18,13 @@ func NewTeamService(teamRepository domain.Repository) domain.Service {
 
 func (teamService *teamService) Create(ctx context.Context, input domain.CreateInput) (domain.Team, error) {
 	normalizedName := strings.TrimSpace(input.Name)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	team := domain.Team{
-		ID:      id.New(),
-		OwnerID: input.UserID,
-		Name:    normalizedName,
+		ID:        id.New(),
+		OwnerID:   input.UserID,
+		Name:      normalizedName,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if err := teamService.Repository.Create(ctx, team); err != nil {
 		return team, err

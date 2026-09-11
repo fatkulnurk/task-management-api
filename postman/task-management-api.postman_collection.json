@@ -364,6 +364,10 @@
                   "pm.test(\"returns a team id\", function () {",
                   "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});",
+                  "pm.test(\"returns timestamps\", function () {",
+                  "  pm.expect(body.created_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.updated_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});",
                   "",
                   "pm.collectionVariables.set(\"team_id\", body.id);"
                 ]

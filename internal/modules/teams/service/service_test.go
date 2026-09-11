@@ -44,6 +44,9 @@ func TestCreate(t *testing.T) {
 						if team.Name != "Platform Engineering" {
 							t.Errorf("name = %q, want %q", team.Name, "Platform Engineering")
 						}
+						if team.CreatedAt == "" || team.UpdatedAt == "" {
+							t.Errorf("timestamps must not be empty: created_at=%q updated_at=%q", team.CreatedAt, team.UpdatedAt)
+						}
 						return nil
 					})
 			},
@@ -53,6 +56,9 @@ func TestCreate(t *testing.T) {
 				}
 				if team.ID == "" {
 					t.Error("team id must not be empty")
+				}
+				if team.CreatedAt == "" || team.UpdatedAt == "" {
+					t.Errorf("timestamps must not be empty: created_at=%q updated_at=%q", team.CreatedAt, team.UpdatedAt)
 				}
 			},
 		},

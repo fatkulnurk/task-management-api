@@ -5,7 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"taskmanagement/internal/modules/teams/domain"
+	"time"
 )
+
+func mysqlDateTime(value string) any {
+	parsed, err := time.Parse("2006-01-02T15:04:05Z", value)
+	if err != nil {
+		return value
+	}
+	return parsed.Format("2006-01-02 15:04:05")
+}
 
 type mySQLTeamRepository struct{ Database *sql.DB }
 
@@ -14,7 +23,7 @@ func NewMySQLTeamRepository(database *sql.DB) domain.Repository {
 }
 
 const (
-	insertTeamQuery       = "INSERT INTO teams(id,owner_id,name,created_at,updated_at) VALUES(?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))"
+	insertTeamQuery       = "INSERT INTO teams(id,owner_id,name,created_at,updated_at) VALUES(?,?,?,?,?)"
 	insertTeamMemberQuery = "INSERT INTO team_members(team_id,user_id) VALUES(?,?)"
 )
 
@@ -24,7 +33,7 @@ func (teamRepository *mySQLTeamRepository) Create(ctx context.Context, team doma
 		return err
 	}
 
-	if _, err = tx.ExecContext(ctx, insertTeamQuery, team.ID, team.OwnerID, team.Name); err == nil {
+	if _, err = tx.ExecContext(ctx, insertTeamQuery, team.ID, team.OwnerID, team.Name, mysqlDateTime(team.CreatedAt), mysqlDateTime(team.UpdatedAt)); err == nil {
 		_, err = tx.ExecContext(ctx, insertTeamMemberQuery, team.ID, team.OwnerID)
 	}
 	if err != nil {
