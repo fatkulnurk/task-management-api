@@ -26,7 +26,8 @@ func newRepository(t *testing.T) (domain.Repository, sqlmock.Sqlmock) {
 }
 
 func TestRepositoryCreate(t *testing.T) {
-	team := domain.Team{ID: "team-1", OwnerID: "user-1", Name: "Platform Engineering"}
+	team := domain.Team{ID: "team-1", OwnerID: "user-1", Name: "Platform Engineering", CreatedAt: "2026-09-10T10:00:00Z", UpdatedAt: "2026-09-10T10:00:00Z"}
+	const teamTimestamp = "2026-09-10 10:00:00"
 
 	tests := []struct {
 		name      string
@@ -38,7 +39,7 @@ func TestRepositoryCreate(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec(insertTeamQuery).
-					WithArgs(team.ID, team.OwnerID, team.Name).
+					WithArgs(team.ID, team.OwnerID, team.Name, teamTimestamp, teamTimestamp).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec(insertTeamMemberQuery).
 					WithArgs(team.ID, team.OwnerID).
@@ -51,7 +52,7 @@ func TestRepositoryCreate(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec(insertTeamQuery).
-					WithArgs(team.ID, team.OwnerID, team.Name).
+					WithArgs(team.ID, team.OwnerID, team.Name, teamTimestamp, teamTimestamp).
 					WillReturnError(errTest)
 				mock.ExpectRollback()
 			},
@@ -62,7 +63,7 @@ func TestRepositoryCreate(t *testing.T) {
 			setup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec(insertTeamQuery).
-					WithArgs(team.ID, team.OwnerID, team.Name).
+					WithArgs(team.ID, team.OwnerID, team.Name, teamTimestamp, teamTimestamp).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectExec(insertTeamMemberQuery).
 					WithArgs(team.ID, team.OwnerID).
