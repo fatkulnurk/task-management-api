@@ -19,18 +19,22 @@ func identity(request *http.Request) string {
 	return identity.UserID
 }
 
-func teamStatus(err error) int {
+func classify(err error) (int, string) {
 	switch {
+	case errors.Is(err, domain.ErrOwner):
+		return 403, errorcode.OwnerCannotBeRemoved
+	case errors.Is(err, domain.ErrAssignments):
+		return 409, errorcode.MemberHasActiveAssignments
 	case errors.Is(err, domain.ErrForbidden):
-		return 403
+		return 403, errorcode.Forbidden
 	case errors.Is(err, domain.ErrConflict):
-		return 409
+		return 409, errorcode.UserAlreadyTeamMember
 	case errors.Is(err, domain.ErrNotFound):
-		return 404
+		return 404, errorcode.NotFound
 	case errors.Is(err, domain.ErrInvalid):
-		return 422
+		return 422, errorcode.InvalidRequest
 	default:
-		return 500
+		return 500, errorcode.InternalError
 	}
 }
 
@@ -72,7 +76,12 @@ func (handler TeamHandler) create(responseWriter http.ResponseWriter, request *h
 		Name:   createRequest.Name,
 	})
 	if err != nil {
-		phttp.JSONResponse4xx(responseWriter, 422, errorcode.InvalidRequest, "invalid team")
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(responseWriter, statusCode)
+		} else {
+			phttp.JSONResponse4xx(responseWriter, statusCode, errorCode, "invalid team")
+		}
 		return
 	}
 	phttp.JSONResponse2xx(responseWriter, 201, team)
@@ -108,12 +117,13 @@ func (handler TeamHandler) get(responseWriter http.ResponseWriter, request *http
 		TeamID: chi.URLParam(request, "id"),
 		UserID: identity(request),
 	})
-	if errors.Is(err, domain.ErrNotFound) {
-		phttp.JSONResponse4xx(responseWriter, 404, errorcode.NotFound, "team not found")
-		return
-	}
 	if err != nil {
-		phttp.JSONResponse5xx(responseWriter, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(responseWriter, statusCode)
+		} else {
+			phttp.JSONResponse4xx(responseWriter, statusCode, errorCode, "team not found")
+		}
 		return
 	}
 	phttp.JSONResponse2xx(responseWriter, 200, team)
@@ -131,12 +141,13 @@ func (handler TeamHandler) members(responseWriter http.ResponseWriter, request *
 		Page:   pageNumber,
 		Limit:  limit,
 	})
-	if errors.Is(err, domain.ErrNotFound) {
-		phttp.JSONResponse4xx(responseWriter, 404, errorcode.NotFound, "team not found")
-		return
-	}
 	if err != nil {
-		phttp.JSONResponse5xx(responseWriter, 500)
+		statusCode, errorCode := classify(err)
+		if statusCode >= 500 {
+			phttp.JSONResponse5xx(responseWriter, statusCode)
+		} else {
+			phttp.JSONResponse4xx(responseWriter, statusCode, errorCode, "team not found")
+		}
 		return
 	}
 	phttp.JSONResponse2xx(responseWriter, 200, map[string]any{
@@ -165,11 +176,11 @@ func (handler TeamHandler) add(responseWriter http.ResponseWriter, request *http
 		Email:        addRequest.Email,
 	})
 	if err != nil {
-		statusCode := teamStatus(err)
+		statusCode, errorCode := classify(err)
 		if statusCode >= 500 {
-			phttp.JSONResponse5xx(responseWriter, 500)
+			phttp.JSONResponse5xx(responseWriter, statusCode)
 		} else {
-			phttp.JSONResponse4xx(responseWriter, statusCode, errorcode.InvalidRequest, "unable to add member")
+			phttp.JSONResponse4xx(responseWriter, statusCode, errorCode, "unable to add member")
 		}
 		return
 	}
@@ -183,14 +194,11 @@ func (handler TeamHandler) remove(responseWriter http.ResponseWriter, request *h
 		TargetUserID: chi.URLParam(request, "user_id"),
 	})
 	if err != nil {
-		statusCode := teamStatus(err)
-		if errors.Is(err, domain.ErrOwner) {
-			statusCode = 403
-		}
+		statusCode, errorCode := classify(err)
 		if statusCode >= 500 {
-			phttp.JSONResponse5xx(responseWriter, 500)
+			phttp.JSONResponse5xx(responseWriter, statusCode)
 		} else {
-			phttp.JSONResponse4xx(responseWriter, statusCode, errorcode.Forbidden, "unable to remove member")
+			phttp.JSONResponse4xx(responseWriter, statusCode, errorCode, "unable to remove member")
 		}
 		return
 	}
