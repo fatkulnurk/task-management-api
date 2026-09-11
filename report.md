@@ -4,8 +4,9 @@ Technical Test — Back End Developer (Task Management API, Multi-User).
 
 - **Date:** 2026-09-11
 - **Repository:** https://github.com/fatkulnurk/task-management-api
-- **Commit under test:** `2cef96a` (branch `main`)
-- **Result:** All 17 endpoints pass, 17/17 error cases pass, 35/35 Postman assertions pass, 51-case security matrix pass, all Go suites pass.
+- **Commit under test:** `7055552` (branch `main`), re-run on branch `feat/e2e-reverification`
+- **Result:** All 17 endpoints pass, 17/17 error cases pass, 35/35 Postman assertions pass, 50/51 security matrix exact (1 rejected earlier, still safe), all Go suites pass.
+- **Re-run note:** this pass repeats the full suite on `7055552`. Compared with the first pass (`2cef96a`), the only changes are the platform unit tests and two constructor signatures (`jwt.New`, `notification.NewLogger`) that return application interfaces; no runtime behavior changed, and every result is identical.
 
 ## 1. Environment
 
@@ -151,6 +152,16 @@ task_created 10 | task_assigned 2 | task_status_changed 4 | task_deleted 2
 
 The deltas match the operations performed: every create, update, assign, and delete wrote exactly one log row in the same transaction. `POST /tasks/{id}/assign` changed `assignee_id` and wrote `task_assigned`; unassign writes `task_unassigned`. Each distinct `Idempotency-Key` produced exactly one stored response.
 
+### Re-run (`7055552`)
+
+Fresh database baseline `users 3 | teams 2 | team_members 5 | tasks 7 (6 alive) | task_logs 11 | idempotency_keys 0`. After Newman, the error matrix, and the security matrix:
+
+```text
+users 6 | teams 4 | team_members 9 | tasks 16 (15 alive) | task_logs 26 | idempotency_keys 9
+```
+
+The only `task.creator_id` values present are alice (`11111111-...`) and bob (`22222222-...`), the two legitimate actors. No task titled `hijack` or `x` exists, so every rejected write created zero rows. After the gap probes the final counts were `users 6 | teams 5 | team_members 9 | tasks 17 (15 alive) | task_logs 27 | idempotency_keys 10`, with `task_logs` actions `task_created 16 | task_assigned 3 | task_status_changed 5 | task_updated 1 | task_deleted 2`.
+
 ## 7. Logging and observability
 
 Structured JSON logs from `log/slog`, one line per request:
@@ -179,10 +190,10 @@ The forced 5xx response body did not leak any internal detail:
 |---|---|
 | `go build ./...` | PASS |
 | `go vet ./...` | PASS |
-| `go test ./...` | PASS — 12 packages `ok`, 0 failures (~97 test functions) |
+| `go test ./...` | PASS — 17 packages `ok`, 0 failures (~120 test functions) |
 | `go test -race ./...` (via `make test-race`, `golang:1.27`) | PASS — no data races |
 | `go test -race -tags=integration ./internal/modules/tasks/repository/...` (via `make test-integration`) | PASS |
-| `make test-cover` | 64.9% of statements in the business modules |
+| `make test-cover` | 67.1% of statements in the business modules |
 | `gofmt -l internal cmd` on committed LF blobs (Linux container) | PASS — 0 files |
 
 Unit tests use `gomock` and `go-sqlmock` only. `go test ./...` needs no database or network; the integration test is gated behind the `integration` build tag and skips when `TEST_DATABASE_URL` is unset.
@@ -317,6 +328,8 @@ After the entire security run, no task titled `hijack` or `x` existed, and no ta
 | S6 | Info | Access token in the refresh body is rejected at `422` validation instead of `401` | still rejected, no security impact |
 
 Concurrent idempotency was also exercised over HTTP: 16 concurrent `POST /tasks` with one key produced exactly one unique task id.
+
+The same matrix was re-run unchanged on `7055552`: the same 50/51 exact matches (the one exception is S6), the same concurrent idempotency result, and the same gap-probe numbers (concurrent add-member `201` x1 / `409` x11, login `401` x20, logout `401`, timing ratio ~14.6x).
 
 ## 11. Known limitations
 
