@@ -32,16 +32,16 @@ type LogoutInput struct {
 }
 
 type UserOutput struct {
-	ID    string
-	Name  string
-	Email string
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 type TokenPair struct {
-	AccessToken           string
-	RefreshToken          string
-	TokenType             string
-	ExpiresIn             int64
-	AccessTokenExpiresAt  time.Time
-	RefreshTokenExpiresAt time.Time
+	AccessToken           string    `json:"access_token"`
+	RefreshToken          string    `json:"refresh_token"`
+	TokenType             string    `json:"token_type"`
+	ExpiresIn             int64     `json:"expires_in"`
+	AccessTokenExpiresAt  time.Time `json:"access_token_expires_at"`
+	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
 }

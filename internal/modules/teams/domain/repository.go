@@ -16,16 +16,16 @@ type Repository interface {
 }
 
 type Team struct {
-	ID        string
-	OwnerID   string
-	Name      string
-	CreatedAt string
-	UpdatedAt string
+	ID        string `json:"id"`
+	OwnerID   string `json:"owner_id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type Member struct {
-	ID      string
-	Name    string
-	Email   string
-	IsOwner bool
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	IsOwner bool   `json:"is_owner"`
 }
