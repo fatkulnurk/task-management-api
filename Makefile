@@ -1,6 +1,6 @@
 MOCKGEN ?= mockgen
 
-.PHONY: mocks mocks-auth mocks-teams mocks-tasks mocks-notification mocks-token test test-verbose test-cover test-race test-integration
+.PHONY: mocks mocks-auth mocks-teams mocks-tasks mocks-notification mocks-token test test-verbose test-cover test-race test-integration jwt-secret
 
 mocks: mocks-auth mocks-teams mocks-tasks mocks-notification mocks-token
 
@@ -53,3 +53,6 @@ test-race:
 
 test-integration:
 	docker run --rm --network taskmanagement_default -e "TEST_DATABASE_URL=root:rootpassword@tcp(mysql:3306)/?multiStatements=true" -v "$(CURDIR):/src" -w /src -v taskmanagement-gomod:/go/pkg/mod golang:1.27 go test -race -tags=integration ./internal/modules/tasks/repository/...
+
+jwt-secret:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-jwt-secret.ps1
