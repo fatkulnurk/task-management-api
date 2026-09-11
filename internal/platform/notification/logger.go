@@ -10,7 +10,7 @@ type Logger struct {
 	Logger *slog.Logger
 }
 
-func NewLogger(logger *slog.Logger) *Logger {
+func NewLogger(logger *slog.Logger) applicationnotification.NotificationService {
 	return &Logger{Logger: logger}
 }
 
