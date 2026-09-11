@@ -2,7 +2,7 @@
   "info": {
     "name": "Task Management API",
     "_postman_id": "b7f3c2a1-5d4e-4f6a-9c8b-1a2b3c4d5e6f",
-    "description": "Multi-user Task Management REST API. Import this collection, then run requests from top to bottom. Login stores the access token automatically; create team and create task store their ids for the next requests.",
+    "description": "Multi-user Task Management REST API. Import this collection, then run requests from top to bottom. Login stores the access token automatically; create team and create task store their ids for the next requests. The Tasks folder shows idempotency: one request uses a new key each run, the next reuses a fixed key and replays the first response. Run Cleanup last.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -44,6 +44,11 @@
     {
       "key": "user_id",
       "value": "22222222-2222-4222-8222-222222222222",
+      "type": "string"
+    },
+    {
+      "key": "replay_idempotency_key",
+      "value": "550e8400-e29b-41d4-a716-446655440000",
       "type": "string"
     }
   ],
@@ -551,40 +556,6 @@
             }
           ],
           "response": []
-        },
-        {
-          "name": "DELETE /teams/{id}/members/{user_id}",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/teams/{{team_id}}/members/{{user_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "teams",
-                "{{team_id}}",
-                "members",
-                "{{user_id}}"
-              ]
-            },
-            "description": "Remove a member. The owner cannot be removed and a member with active task assignments cannot be removed."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 204\", function () {",
-                  "  pm.response.to.have.status(204);",
-                  "});"
-                ]
-              }
-            }
-          ],
-          "response": []
         }
       ]
     },
@@ -603,7 +574,7 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{$guid}}",
-                "description": "Must be a UUID. Reuse the same value to replay the same response."
+                "description": "Must be a UUID. A new key makes a new task. Use the same key again to get the first response and no new task."
               }
             ],
             "body": {
@@ -640,8 +611,79 @@
                   "pm.test(\"returns a task id\", function () {",
                   "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});",
+                  "pm.test(\"returns timestamps\", function () {",
+                  "  pm.expect(body.created_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.updated_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});",
                   "",
                   "pm.collectionVariables.set(\"task_id\", body.id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "POST /tasks (same key - replay)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{replay_idempotency_key}}",
+                "description": "A fixed UUID. Running this request again returns the first response and makes no new task."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"team_id\": \"{{team_id}}\",\n  \"title\": \"Demo task\",\n  \"description\": \"Created from Postman\",\n  \"status\": \"todo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/tasks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tasks"
+              ]
+            },
+            "description": "Create a task with a fixed Idempotency-Key. The first run makes the task. Later runs return the same task and the same body, so no duplicate is made. This request does not change the task_id variable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns a task id\", function () {",
+                  "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});",
+                  "pm.test(\"returns timestamps\", function () {",
+                  "  pm.expect(body.created_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.updated_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});",
+                  "",
+                  "const previous = pm.collectionVariables.get(\"replay_task_id\");",
+                  "if (previous) {",
+                  "  pm.test(\"replays the first response\", function () {",
+                  "    pm.expect(body.id).to.eql(previous);",
+                  "  });",
+                  "}",
+                  "pm.collectionVariables.set(\"replay_task_id\", body.id);"
                 ]
               }
             }
@@ -743,6 +785,10 @@
                   "const body = pm.response.json();",
                   "pm.test(\"returns the task\", function () {",
                   "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});",
+                  "pm.test(\"returns timestamps\", function () {",
+                  "  pm.expect(body.created_at).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.updated_at).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});"
                 ]
               }
@@ -802,38 +848,6 @@
           "response": []
         },
         {
-          "name": "DELETE /tasks/{id}",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/tasks/{{task_id}}",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "tasks",
-                "{{task_id}}"
-              ]
-            },
-            "description": "Soft delete a task. Only the creator can delete it. Returns an empty 204 response."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 204\", function () {",
-                  "  pm.response.to.have.status(204);",
-                  "});"
-                ]
-              }
-            }
-          ],
-          "response": []
-        },
-        {
           "name": "POST /tasks/{id}/assign",
           "request": {
             "method": "POST",
@@ -878,6 +892,77 @@
                   "const body = pm.response.json();",
                   "pm.test(\"returns the assigned task\", function () {",
                   "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "DELETE /tasks/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tasks/{{task_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tasks",
+                "{{task_id}}"
+              ]
+            },
+            "description": "Soft delete a task. Only the creator can delete it. Returns an empty 204 response. Run this after the assign request, because a deleted task cannot be assigned."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cleanup",
+      "item": [
+        {
+          "name": "DELETE /teams/{id}/members/{user_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_id}}/members/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_id}}",
+                "members",
+                "{{user_id}}"
+              ]
+            },
+            "description": "Remove a member. The owner cannot be removed and a member with active task assignments cannot be removed. Run this last, after the assigned task is deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", function () {",
+                  "  pm.response.to.have.status(204);",
                   "});"
                 ]
               }
