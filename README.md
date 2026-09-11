@@ -88,7 +88,9 @@ docker compose up -d --build
 
 ## Quick start
 
-The folder `postman/` has a collection. Import it:
+The folder `postman/` has a collection for this API. The file is `postman/task-management-api.postman_collection.json`. It has 5 folders and 18 requests in total.
+
+Import it:
 
 1. Open Postman.
 2. Click Import.
@@ -98,12 +100,27 @@ Then run the requests from top to bottom: Health, Auth, Teams, Tasks, Cleanup.
 
 The collection keeps its own variables. It does the link work for you:
 
-- `base_url` is `http://localhost:44001`.
-- `POST /auth/login` saves the access token and the refresh token.
-- `POST /teams` saves the new `team_id`.
-- `POST /tasks` saves the new `task_id`.
+| Variable | Set by | Meaning |
+|---|---|---|
+| `base_url` | the collection | `http://localhost:44001` |
+| `access_token` | `POST /auth/login`, `POST /auth/refresh` | the bearer token for the later requests |
+| `refresh_token` | `POST /auth/login`, `POST /auth/refresh` | the token for `refresh` and `logout` |
+| `team_id` | `POST /teams` | the new team, used by the team and task requests |
+| `task_id` | `POST /tasks` | the new task, used by the task requests |
+| `user_id` | the collection | the seed user bob, used to add a member and to assign |
+| `replay_idempotency_key` | the collection | the fixed key for the replay request |
 
 Start with `POST /auth/login`. It uses a seed user: `alice@fatkulnurk.com` with password `password`. After that, the Teams and Tasks requests have a token.
+
+### Run with Newman
+
+You can run the whole collection from the command line:
+
+```text
+npx newman run postman/task-management-api.postman_collection.json
+```
+
+This makes 18 requests and 36 checks. All of them must pass. The API must be running first. The collection uses `http://localhost:44001`.
 
 Two requests in the Tasks folder show idempotency:
 

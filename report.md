@@ -4,9 +4,9 @@ Technical Test — Back End Developer (Task Management API, Multi-User).
 
 - **Date:** 2026-09-11
 - **Repository:** https://github.com/fatkulnurk/task-management-api
-- **Commit under test:** `7b2691a` (branch `main`)
+- **Commit under test:** `e64ef4a` (branch `fix/team-create-timestamps`, based on `7b2691a`)
 - **Result:** All 17 endpoints pass, 17/17 error cases pass, 36/36 Postman assertions pass, 50/51 security matrix exact (1 rejected earlier, still safe), all Go suites pass, 28 extra edge probes matched.
-- **Run note:** this is the final pass on the current `main` (`7b2691a`, the merge of PR #6). It re-runs every earlier suite on a freshly built stack and adds a new edge-probe group (routing, pagination limits, status transitions, races). Two routing gaps were found and are reported in sections 10 and 11.
+- **Run note:** this pass re-runs every earlier suite on a freshly built stack after the team-create timestamp fix (`e64ef4a`). The only code change since `7b2691a` is that `POST /teams` now returns the stored `created_at`/`updated_at` (section 4); every other result is unchanged.
 
 ## 1. Environment
 
@@ -42,7 +42,7 @@ Command:
 npx newman run postman/task-management-api.postman_collection.json
 ```
 
-Summary: **18 requests, 36 assertions, 0 failures** (duration ~1.8s, average 16ms).
+Summary: **18 requests, 36 assertions, 0 failures** (duration ~1.7s, average 17ms).
 
 | # | Request | Status |
 |---|---|---|
@@ -140,12 +140,12 @@ Baseline after fresh migration:
 users 3 | teams 2 | team_members 5 | tasks 7 (6 alive) | task_logs 11 | idempotency_keys 0
 ```
 
-### Final run (`7b2691a`)
+### Final run (`e64ef4a`)
 
-Fresh database baseline `users 3 | teams 2 | team_members 5 | tasks 7 (6 alive) | task_logs 11 | idempotency_keys 0`. After Newman, the error matrix, the security matrix, the gap probes, and the extra probes:
+Fresh database baseline `users 3 | teams 2 | team_members 5 | tasks 7 (6 alive) | task_logs 11 | idempotency_keys 0`. After Newman, the error matrix, the security matrix, the gap probes, the extra probes, and the team-create verification:
 
 ```text
-users 7 | teams 5 | team_members 9 | tasks 18 (16 alive) | task_logs 31 | idempotency_keys 11
+users 7 | teams 6 | team_members 10 | tasks 18 (16 alive) | task_logs 31 | idempotency_keys 11
 ```
 
 `task_logs` by action:
@@ -169,15 +169,15 @@ Structured JSON logs from `log/slog`, one line per request:
 | Check | Result |
 |---|---|
 | Every request logs `request_id` (UUID), `method`, `path`, `status`, `latency` | PASS |
-| Level INFO for 2xx/3xx | PASS (145 INFO lines) |
-| Level WARN for 4xx | PASS (128 WARN lines) |
+| Level INFO for 2xx/3xx | PASS (104 INFO lines) |
+| Level WARN for 4xx | PASS (124 WARN lines) |
 | Level ERROR for 5xx | PASS — MySQL was stopped briefly; `GET /tasks` returned a sanitized `500` and logged at ERROR with all fields; MySQL restarted, health back to `204` |
 | Panic is recovered and answered with a generic `500`; no stack trace in the body | PASS (covered by the `TestStackRecover` unit test; stack trace goes to the ERROR log) |
 
-Across the whole run the API wrote 274 request log lines: 145 INFO, 128 WARN, 1 ERROR. The single ERROR line is the forced 5xx:
+Across the whole run the API wrote 229 request log lines: 104 INFO, 124 WARN, 1 ERROR. The single ERROR line is the forced 5xx:
 
 ```json
-{"time":"2026-09-11T07:58:15.333896411Z","level":"ERROR","msg":"http","request_id":"969efc31-6e35-4d1d-a22f-0f324edc8294","method":"GET","path":"/tasks","status":500,"latency":7831948}
+{"time":"2026-09-11T08:26:56.97765118Z","level":"ERROR","msg":"http","request_id":"dec78488-bafa-4697-b18d-cf28984e422d","method":"GET","path":"/tasks","status":500,"latency":7848608}
 ```
 
 Note: the ERROR line records that the request failed and its status, but **not the underlying error** (for example the MySQL outage text). The cause is discarded after `classify(err)` in the handler, so an operator can see *that* a 500 happened but not *why*. This is the only observability gap found; see finding S7.
@@ -197,7 +197,7 @@ The forced 5xx response body did not leak any internal detail:
 | `go test ./...` | PASS — 17 packages `ok`, 0 failures (~120 test functions) |
 | `go test -race ./...` (via `make test-race`, `golang:1.27`) | PASS — no data races |
 | `go test -race -tags=integration ./internal/modules/tasks/repository/...` (via `make test-integration`) | PASS |
-| `make test-cover` | 67.1% of statements in the business modules |
+| `make test-cover` | 67.2% of statements in the business modules |
 | `gofmt -l internal cmd` on committed LF blobs (Linux container) | PASS — 0 files |
 
 Unit tests use `gomock` and `go-sqlmock` only. `go test ./...` needs no database or network; the integration test is gated behind the `integration` build tag and skips when `TEST_DATABASE_URL` is unset.
@@ -323,7 +323,7 @@ After the entire security run, no task titled `hijack` or `x` existed, and no ta
 
 | # | Severity | Finding | Observed |
 |---|---|---|---|
-| S1 | Medium | Login runs bcrypt only when the email exists, so an unknown email answers faster | known-email wrong-password avg `0.0568s` vs unknown-email avg `0.0036s` (15.8x); user enumeration oracle |
+| S1 | Medium | Login runs bcrypt only when the email exists, so an unknown email answers faster | known-email wrong-password avg `0.0549s` vs unknown-email avg `0.0037s` (14.8x); user enumeration oracle |
 | S2 | Medium | No login rate limiting or lockout | 20 consecutive wrong-password attempts all returned `401`, no `429` |
 | S3 | Low | `POST /auth/logout` returns `401` for an unknown refresh token | confirmed `401 unauthorized` |
 | S4 | Info | Concurrent duplicate `POST /teams/{id}/members` | 12 concurrent adds: `201` x1, `409` x11, no `500` — the previously suspected `500` did not reproduce |
@@ -334,7 +334,7 @@ After the entire security run, no task titled `hijack` or `x` existed, and no ta
 
 Concurrent idempotency was also exercised over HTTP: 16 concurrent `POST /tasks` with one key produced exactly one unique task id.
 
-The same matrix was re-run unchanged on `7b2691a`: the same 50/51 exact matches (the one exception is S6), the same concurrent idempotency result, and the same gap-probe numbers (concurrent add-member `201` x1 / `409` x11, login `401` x20, logout `401`, timing ratio ~15.8x).
+The same matrix was re-run unchanged on `e64ef4a`: the same 50/51 exact matches (the one exception is S6), the same concurrent idempotency result, and the same gap-probe numbers (concurrent add-member `201` x1 / `409` x11, login `401` x20, logout `401`, timing ratio ~14.8x).
 
 ## 11. Additional edge probes
 
