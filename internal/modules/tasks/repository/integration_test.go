@@ -108,6 +108,10 @@ func seedTeam(t *testing.T, database *sql.DB) (string, string) {
 	return userID, teamID
 }
 
+func nowTimestamp() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
+}
+
 func countRows(t *testing.T, database *sql.DB, table string) int {
 	t.Helper()
 	var count int
@@ -124,7 +128,6 @@ func TestCreateIdempotentConcurrent(t *testing.T) {
 
 	const goroutines = 32
 	key := id.New()
-	requestHash := "concurrent-request-hash"
 	body := []byte(`{"id":"concurrent-task"}`)
 
 	results := make([]domain.CreateOutput, goroutines)
@@ -136,8 +139,9 @@ func TestCreateIdempotentConcurrent(t *testing.T) {
 		go func(goroutineIndex int) {
 			defer waitGroup.Done()
 			<-start
-			task := domain.Task{ID: id.New(), TeamID: teamID, CreatorID: userID, Title: "Concurrent task", Status: "todo"}
-			results[goroutineIndex], errs[goroutineIndex] = repository.CreateIdempotent(context.Background(), task, userID, key, requestHash, body)
+			now := nowTimestamp()
+			task := domain.Task{ID: id.New(), TeamID: teamID, CreatorID: userID, Title: "Concurrent task", Status: "todo", CreatedAt: now, UpdatedAt: now}
+			results[goroutineIndex], errs[goroutineIndex] = repository.CreateIdempotent(context.Background(), task, userID, key, body)
 		}(index)
 	}
 	close(start)
@@ -175,15 +179,15 @@ func TestCreateIdempotentSequentialReplay(t *testing.T) {
 	repository := NewMySQLTaskRepository(database)
 
 	key := id.New()
-	requestHash := "sequential-request-hash"
 	body := []byte(`{"id":"sequential-task"}`)
-	task := domain.Task{ID: id.New(), TeamID: teamID, CreatorID: userID, Title: "Sequential task", Status: "todo"}
+	now := nowTimestamp()
+	task := domain.Task{ID: id.New(), TeamID: teamID, CreatorID: userID, Title: "Sequential task", Status: "todo", CreatedAt: now, UpdatedAt: now}
 
-	first, err := repository.CreateIdempotent(context.Background(), task, userID, key, requestHash, body)
+	first, err := repository.CreateIdempotent(context.Background(), task, userID, key, body)
 	if err != nil {
 		t.Fatalf("first create error: %v", err)
 	}
-	second, err := repository.CreateIdempotent(context.Background(), task, userID, key, requestHash, body)
+	second, err := repository.CreateIdempotent(context.Background(), task, userID, key, body)
 	if err != nil {
 		t.Fatalf("second create error: %v", err)
 	}
