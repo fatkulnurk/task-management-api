@@ -141,8 +141,8 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns the new user\", function () {",
-                  "  pm.expect(body.ID).to.be.a(\"string\").and.to.have.length.above(0);",
-                  "  pm.expect(body.Email).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.email).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});"
                 ]
               }
@@ -196,12 +196,12 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns a token pair\", function () {",
-                  "  pm.expect(body.AccessToken).to.be.a(\"string\").and.to.have.length.above(0);",
-                  "  pm.expect(body.RefreshToken).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.access_token).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.refresh_token).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});",
                   "",
-                  "pm.collectionVariables.set(\"access_token\", body.AccessToken);",
-                  "pm.collectionVariables.set(\"refresh_token\", body.RefreshToken);"
+                  "pm.collectionVariables.set(\"access_token\", body.access_token);",
+                  "pm.collectionVariables.set(\"refresh_token\", body.refresh_token);"
                 ]
               }
             }
@@ -254,12 +254,12 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns a token pair\", function () {",
-                  "  pm.expect(body.AccessToken).to.be.a(\"string\").and.to.have.length.above(0);",
-                  "  pm.expect(body.RefreshToken).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.access_token).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.refresh_token).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});",
                   "",
-                  "pm.collectionVariables.set(\"access_token\", body.AccessToken);",
-                  "pm.collectionVariables.set(\"refresh_token\", body.RefreshToken);"
+                  "pm.collectionVariables.set(\"access_token\", body.access_token);",
+                  "pm.collectionVariables.set(\"refresh_token\", body.refresh_token);"
                 ]
               }
             }
@@ -362,10 +362,10 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns a team id\", function () {",
-                  "  pm.expect(body.ID).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});",
                   "",
-                  "pm.collectionVariables.set(\"team_id\", body.ID);"
+                  "pm.collectionVariables.set(\"team_id\", body.id);"
                 ]
               }
             }
@@ -448,7 +448,7 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns the team\", function () {",
-                  "  pm.expect(body.ID).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});"
                 ]
               }
@@ -549,7 +549,7 @@
                   "",
                   "const body = pm.response.json();",
                   "pm.test(\"returns the member\", function () {",
-                  "  pm.expect(body.ID).to.be.a(\"string\").and.to.have.length.above(0);",
+                  "  pm.expect(body.id).to.be.a(\"string\").and.to.have.length.above(0);",
                   "});"
                 ]
               }
