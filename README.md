@@ -59,10 +59,16 @@ adapter/api  ->  service  ->  domain  <-  repository
 
 The API image is built in two steps with alpine. It is about 26MB. The database is MySQL 9.7.2.
 
+Start the stack:
+
 ```text
 docker compose up -d --build
+```
+
+Stop the stack:
+
+```text
 docker compose down
-docker compose down -v
 ```
 
 - The API uses host port `44001`. MySQL uses host port `44002`. Both bind to `127.0.0.1`, so they are not open on the network.
@@ -72,7 +78,7 @@ docker compose down -v
 - The app reads every setting from `.env` through `env_file`. The file is required.
 - `JWT_SECRET` has no default. The app exits when it is empty.
 
-Before the first start, copy the settings file and set the secret:
+Before the first start, copy the settings file and set the secret (on PowerShell use `Copy-Item .env.example .env`):
 
 ```text
 cp .env.example .env
@@ -88,7 +94,7 @@ The folder `postman/` has a collection. Import it:
 2. Click Import.
 3. Choose `postman/task-management-api.postman_collection.json`.
 
-Then run the requests from top to bottom: Health, Auth, Teams, Tasks.
+Then run the requests from top to bottom: Health, Auth, Teams, Tasks, Cleanup.
 
 The collection keeps its own variables. It does the link work for you:
 
@@ -97,7 +103,14 @@ The collection keeps its own variables. It does the link work for you:
 - `POST /teams` saves the new `team_id`.
 - `POST /tasks` saves the new `task_id`.
 
-Run `POST /auth/login` first. It uses a seed user: `alice@fatkulnurk.com` with password `password`. After that, the Teams and Tasks requests have a token.
+Start with `POST /auth/login`. It uses a seed user: `alice@fatkulnurk.com` with password `password`. After that, the Teams and Tasks requests have a token.
+
+Two requests in the Tasks folder show idempotency:
+
+- `POST /tasks` uses a new key each run, so it makes a new task.
+- `POST /tasks (same key - replay)` uses a fixed key. The first run makes a task; later runs return that first task and no duplicate.
+
+Run `Cleanup` last. It removes the member, and a member with an active task assignment cannot be removed.
 
 ## Test data
 
@@ -150,7 +163,7 @@ The password must have 8 characters or more. The email must be unique. `login` a
 
 You must send an `Idempotency-Key` header. The value must be a UUID.
 
-If you send the same request again with the same key, you get the same answer. No new task is made. This works for 24 hours. If the body is different, you get `409`.
+If you send the same request again with the same key, you get the same answer and no new task is made, even when the body is different. This works for 24 hours.
 
 ```text
 Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
@@ -208,17 +221,19 @@ If you are not part of a task or a team, the API answers `404`. It does not answ
 - The password is stored with bcrypt. The API never stores the plain password.
 - The access token is a JWT. It uses `HS256` and always has an `exp`. The secret must be 32 characters or more.
 - The refresh token is a random string. The database stores only its hash. Each `refresh` gives a new refresh token and drops the old one. `logout` drops it too.
-- An idempotency key is private to one user. It is counted together with the user id and the endpoint.
+- An idempotency key is private to one user. The stored response is counted per user and key.
 
 ## Errors and logs
 
 All errors use the same JSON format:
 
 ```json
-{"status":409,"code":"idempotency_key_reused","message":"unable to create task","timestamp":"2026-09-10T10:00:00Z"}
+{"status":404,"code":"not_found","message":"task not found","timestamp":"2026-09-10T10:00:00Z"}
 ```
 
 Validation errors also have an `errors` array. Each item has `field`, `code`, and `message`. The status codes are: `400` for bad input, `401` for no valid token, `403` for not allowed, `404` for not found or hidden, `409` for a conflict, `422` for a validation error, and `500` for an internal error.
+
+Some errors carry a specific `code`: `user_already_team_member` (`409`), `owner_cannot_be_removed` (`403`), and `member_has_active_assignments` (`409`).
 
 Every response has an `X-Request-Id` header. The value is a UUID. If you send a valid UUID in the `X-Request-Id` header, the API uses it. If not, the API makes a new one. The API writes one JSON log line for each request. The line has `request_id`, `method`, `path`, `status`, and `latency`. The log level is INFO for 2xx and 3xx, WARN for 4xx, and ERROR for 5xx. If the code panics, the API logs the stack trace at ERROR. The response never shows the stack trace.
 
