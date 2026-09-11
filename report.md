@@ -107,7 +107,9 @@ Every response was checked automatically during the run:
 | `UserOutput` = `id, name, email` | PASS |
 | `TokenPair` = `access_token, refresh_token, token_type, expires_in, access_token_expires_at, refresh_token_expires_at` | PASS |
 | `Task` = `id, team_id, creator_id, assignee_id, title, description, status, created_at, updated_at` | PASS |
-| List responses = `{data, meta{page, limit, total}}` | PASS |
+
+Every task response is checked for non-empty `created_at` and `updated_at`. On the first pass, `PUT /tasks/{id}` returned empty timestamps because the service echoed the request instead of the stored row. That is fixed on branch `fix/put-task-response`: `Update` now re-reads the stored task, so `PUT` matches `GET /tasks/{id}` byte for byte (`PUT_EQ_GET=True`) and a stray `assignee_id` in the update body is ignored (assignment stays on `POST /tasks/{id}/assign`).
+
 
 Sample error body:
 
@@ -207,7 +209,32 @@ Unit tests use `gomock` and `go-sqlmock` only. `go test ./...` needs no database
 | Published to GitHub | PASS | Public repo |
 | Email the repository link to the recruiter | OUTSTANDING | Candidate action |
 
-## 10. Known limitations
+## 10. Security review (IDOR and cross-user access)
+
+A read-only audit of every resource path was done. Task access is scoped to the token identity in the SQL itself, and team access is scoped to membership, so there is no IDOR.
+
+| Surface | Guard | Location |
+|---|---|---|
+| `GET /tasks/{id}` | `WHERE id=? AND (creator_id=? OR assignee_id=?)` | `tasks/repository/repository.go` |
+| `GET /tasks` | JOIN `team_members` plus creator/assignee scope | `tasks/repository/repository.go` |
+| `PUT /tasks/{id}` | scoped read, then creator/assignee role check | `tasks/service/service.go` |
+| `DELETE /tasks/{id}` | `WHERE id=? AND creator_id=?` | `tasks/repository/repository.go` |
+| `POST /tasks/{id}/assign` | creator-only, target must be a team member | `tasks/service/service.go` |
+| `GET /teams`, `GET /teams/{id}` | JOIN `team_members` on the caller | `teams/repository/repository.go` |
+| `GET /teams/{id}/members` | `IsMember`, else `404` | `teams/repository/repository.go` |
+| `POST`/`DELETE /teams/{id}/members` | `IsOwner` | `teams/service/service.go` |
+
+Non-access returns `404`, not `403`, so a stranger cannot tell whether a resource exists. Mass assignment is not possible: `creator_id` and `owner_id` are never read from a body, and `team_id` on update is overwritten from the stored task.
+
+Recorded gaps (not IDOR, left as follow-ups):
+
+- Removing a team member does not revoke task access for tasks they created; task access is identity-based by design.
+- Login runs bcrypt only when the email exists, a timing oracle for user enumeration.
+- No login rate limiting.
+- A concurrent duplicate `POST /teams/{id}/members` can return `500` instead of `409` because the unique-key error is not mapped.
+- `POST /auth/logout` returns `401` for an unknown token; refresh-token reuse has no family invalidation.
+
+## 11. Known limitations
 
 - `gofmt -l` on this Windows checkout flags every file because line endings are CRLF. The committed blobs are LF and are gofmt-clean; this was confirmed by extracting the commit into a Linux container (0 files needed formatting). This is an environment artifact, not a code issue.
 - `golangci-lint` and `go-arch-lint` were not run: the installed lint binary targets Go 1.26 and rejects Go 1.27, and `go-arch-lint` is not installed. Dependency direction was checked by hand and by `go vet`.
