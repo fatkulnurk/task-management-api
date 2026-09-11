@@ -18,6 +18,10 @@ import (
 
 var errTest = errors.New("test error")
 
+func pointer(value string) *string {
+	return &value
+}
+
 func newTaskService(t *testing.T) (*taskService, *domainmocks.MockRepository, *notificationmocks.MockNotificationService) {
 	t.Helper()
 	controller := gomock.NewController(t)
@@ -276,10 +280,16 @@ func TestUpdate(t *testing.T) {
 						}
 						return nil
 					})
+				repository.EXPECT().
+					Get(gomock.Any(), "task-1", "user-1").
+					Return(domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Prepare report v2", Description: "Weekly", Status: "todo", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-02T00:00:00Z"}, nil)
 			},
 			check: func(t *testing.T, task domain.Task) {
 				if task.Title != "Prepare report v2" {
 					t.Errorf("title = %q, want %q", task.Title, "Prepare report v2")
+				}
+				if task.CreatedAt != "2026-01-01T00:00:00Z" || task.UpdatedAt != "2026-01-02T00:00:00Z" {
+					t.Errorf("timestamps not from stored task: %+v", task)
 				}
 			},
 		},
@@ -311,10 +321,36 @@ func TestUpdate(t *testing.T) {
 						}
 						return nil
 					})
+				repository.EXPECT().
+					Get(gomock.Any(), "task-1", "user-2").
+					Return(domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Prepare report", Description: "Weekly", Status: "done", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-02T00:00:00Z"}, nil)
 			},
 			check: func(t *testing.T, task domain.Task) {
 				if task.Status != "done" {
 					t.Errorf("status = %q, want %q", task.Status, "done")
+				}
+				if task.CreatedAt != "2026-01-01T00:00:00Z" || task.UpdatedAt != "2026-01-02T00:00:00Z" {
+					t.Errorf("timestamps not from stored task: %+v", task)
+				}
+			},
+		},
+		{
+			name:  "request assignee does not override stored assignee",
+			input: domain.UpdateInput{TaskID: "task-1", UserID: "user-1", Task: domain.Task{Title: "Prepare report v2", AssigneeID: pointer("intruder")}},
+			setup: func(repository *domainmocks.MockRepository) {
+				repository.EXPECT().
+					Get(gomock.Any(), "task-1", "user-1").
+					Return(existing, nil)
+				repository.EXPECT().
+					Update(gomock.Any(), gomock.Any(), "user-1").
+					Return(nil)
+				repository.EXPECT().
+					Get(gomock.Any(), "task-1", "user-1").
+					Return(domain.Task{ID: "task-1", TeamID: "team-1", CreatorID: "user-1", Title: "Prepare report v2", Description: "Weekly", Status: "todo"}, nil)
+			},
+			check: func(t *testing.T, task domain.Task) {
+				if task.AssigneeID != nil {
+					t.Errorf("assignee id = %v, want nil from stored task", *task.AssigneeID)
 				}
 			},
 		},

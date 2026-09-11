@@ -8,11 +8,10 @@ type CreateRequest struct {
 }
 
 type UpdateRequest struct {
-	TeamID      string  `json:"team_id"`
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Status      string  `json:"status"`
-	AssigneeID  *string `json:"assignee_id"`
+	TeamID      string `json:"team_id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 type AssignRequest struct {

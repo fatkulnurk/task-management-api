@@ -86,7 +86,11 @@ func (taskService *taskService) Update(ctx context.Context, input domain.UpdateI
 	if err = taskService.Repository.Update(ctx, task, userID); err != nil {
 		return existingTask, err
 	}
-	return task, nil
+	updatedTask, err := taskService.Repository.Get(ctx, taskID, userID)
+	if err != nil {
+		return existingTask, err
+	}
+	return updatedTask, nil
 }
 
 func (taskService *taskService) Delete(ctx context.Context, input domain.DeleteInput) error {

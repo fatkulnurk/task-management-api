@@ -349,6 +349,18 @@ func TestHandlerUpdate(t *testing.T) {
 			setup: func(service *domainmocks.MockService) {
 				service.EXPECT().
 					Update(gomock.Any(), domain.UpdateInput{TaskID: validTaskID, UserID: "user-1", Task: domain.Task{Title: "Prepare report v2"}}).
+					Return(domain.Task{ID: validTaskID, Title: "Prepare report v2", Status: "todo", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-02T00:00:00Z"}, nil)
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   `"created_at":"2026-01-01T00:00:00Z"`,
+		},
+		{
+			name:   "assignee id in body is ignored",
+			taskID: validTaskID,
+			body:   `{"title":"Prepare report v2","assignee_id":"22222222-2222-4222-8222-222222222222"}`,
+			setup: func(service *domainmocks.MockService) {
+				service.EXPECT().
+					Update(gomock.Any(), domain.UpdateInput{TaskID: validTaskID, UserID: "user-1", Task: domain.Task{Title: "Prepare report v2"}}).
 					Return(domain.Task{ID: validTaskID, Title: "Prepare report v2", Status: "todo"}, nil)
 			},
 			wantStatus: http.StatusOK,
