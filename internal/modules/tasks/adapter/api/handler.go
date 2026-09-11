@@ -172,7 +172,6 @@ func (h TaskHandler) update(w http.ResponseWriter, r *http.Request) {
 		Title:       updateRequest.Title,
 		Description: updateRequest.Description,
 		Status:      updateRequest.Status,
-		AssigneeID:  updateRequest.AssigneeID,
 	}
 	task, err := h.TaskService.Update(r.Context(), domain.UpdateInput{
 		TaskID: chi.URLParam(r, "id"),
