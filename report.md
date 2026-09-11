@@ -4,8 +4,8 @@ Technical Test — Back End Developer (Task Management API, Multi-User).
 
 - **Date:** 2026-09-11
 - **Repository:** https://github.com/fatkulnurk/task-management-api
-- **Commit under test:** `ca7dae9` (branch `main`), tests run on branch `feat/e2e-verification`
-- **Result:** All 17 endpoints pass, 17/17 error cases pass, 35/35 Postman assertions pass, all Go suites pass.
+- **Commit under test:** `2cef96a` (branch `main`)
+- **Result:** All 17 endpoints pass, 17/17 error cases pass, 35/35 Postman assertions pass, 51-case security matrix pass, all Go suites pass.
 
 ## 1. Environment
 
@@ -209,30 +209,114 @@ Unit tests use `gomock` and `go-sqlmock` only. `go test ./...` needs no database
 | Published to GitHub | PASS | Public repo |
 | Email the repository link to the recruiter | OUTSTANDING | Candidate action |
 
-## 10. Security review (IDOR and cross-user access)
+## 10. Security E2E (IDOR, JWT, tampering)
 
-A read-only audit of every resource path was done. Task access is scoped to the token identity in the SQL itself, and team access is scoped to membership, so there is no IDOR.
+A second pass ran a 51-case adversarial matrix on a fresh database (`down -v` + `up -d --build`). Actors: `alice` (Platform owner), `bob` (Platform member, Mobile owner), `carol` (member of both), and `mallory` (a new user in no team). Result: **50 cases matched the exact expected status and code; 1 case was rejected earlier than expected but is still safe** (see note).
 
-| Surface | Guard | Location |
+### A. Horizontal task access — another user's task returns `404`
+
+| Case | Expected | Actual |
 |---|---|---|
-| `GET /tasks/{id}` | `WHERE id=? AND (creator_id=? OR assignee_id=?)` | `tasks/repository/repository.go` |
-| `GET /tasks` | JOIN `team_members` plus creator/assignee scope | `tasks/repository/repository.go` |
-| `PUT /tasks/{id}` | scoped read, then creator/assignee role check | `tasks/service/service.go` |
-| `DELETE /tasks/{id}` | `WHERE id=? AND creator_id=?` | `tasks/repository/repository.go` |
-| `POST /tasks/{id}/assign` | creator-only, target must be a team member | `tasks/service/service.go` |
-| `GET /teams`, `GET /teams/{id}` | JOIN `team_members` on the caller | `teams/repository/repository.go` |
-| `GET /teams/{id}/members` | `IsMember`, else `404` | `teams/repository/repository.go` |
-| `POST`/`DELETE /teams/{id}/members` | `IsOwner` | `teams/service/service.go` |
+| bob / carol / mallory `GET` alice's task | `404` | `404` |
+| bob `PUT` alice's task | `404` | `404` |
+| bob / mallory `DELETE` alice's task | `404` | `404` |
+| bob `POST /assign` alice's task | `404` | `404` |
+| alice `GET` own task | `200` | `200` |
 
-Non-access returns `404`, not `403`, so a stranger cannot tell whether a resource exists. Mass assignment is not possible: `creator_id` and `owner_id` are never read from a body, and `team_id` on update is overwritten from the stored task.
+### B. Assignee scope — read and status yes, title/delete/assign no
 
-Recorded gaps (not IDOR, left as follow-ups):
+| Case | Expected | Actual |
+|---|---|---|
+| alice assigns task to bob | `200` | `200` |
+| bob (assignee) `GET` | `200` | `200` |
+| bob (assignee) `PUT` status only | `200` | `200` |
+| bob (assignee) `PUT` title | `403` | `403` |
+| bob (assignee) `DELETE` | `404` | `404` |
+| bob (assignee) reassign | `404` | `404` |
+| carol (same team, not assignee) `GET` | `404` | `404` |
 
-- Removing a team member does not revoke task access for tasks they created; task access is identity-based by design.
-- Login runs bcrypt only when the email exists, a timing oracle for user enumeration.
-- No login rate limiting.
-- A concurrent duplicate `POST /teams/{id}/members` can return `500` instead of `409` because the unique-key error is not mapped.
-- `POST /auth/logout` returns `401` for an unknown token; refresh-token reuse has no family invalidation.
+### C. Cross-team — `404` on tasks, `403` on create
+
+| Case | Expected | Actual |
+|---|---|---|
+| alice `GET`/`PUT`/`DELETE`/`assign` bob's Mobile task | `404` | `404` |
+| alice `POST /tasks` into the Mobile team (not a member) | `403` | `403` |
+
+### D. Team scope — non-member `404`, non-owner writes `403`
+
+| Case | Expected | Actual |
+|---|---|---|
+| alice `GET` Mobile team / members | `404` | `404` |
+| alice add/remove Mobile member (not owner) | `403` | `403` |
+| carol add Platform member (not owner) | `403` | `403` |
+| mallory `GET` Platform team / members | `404` | `404` |
+
+### E. JWT and token abuse — all rejected
+
+| Case | Expected | Actual |
+|---|---|---|
+| No token / malformed `Bearer` / garbage | `401` | `401` |
+| Tampered signature | `401` | `401` |
+| Expired `HS256` | `401` | `401` |
+| `alg=none` (unsigned) | `401` | `401` |
+| `alg=HS384` signed with the secret | `401` | `401` |
+| Missing `exp` | `401` | `401` |
+| Refresh token used as access token | `401` | `401` |
+| Old refresh token after rotation | `401` | `401` |
+| New refresh token after rotation | `200` | `200` |
+| Access token used as refresh token | `401` | `422` (see note) |
+
+The `alg=none`, `HS384`, missing-`exp`, and expired tokens were minted for this test from the configured secret; the verifier accepts `HS256` with a required `exp` only. Note: a JWT access token placed in the refresh body is rejected by request validation at `422 invalid_request` (the value exceeds the 128-char refresh-token limit) before it reaches the service. It is still rejected; only the status differs from the `401` expectation.
+
+### F. Idempotency scoping
+
+| Case | Expected | Actual |
+|---|---|---|
+| Same `Idempotency-Key` for alice and bob | two separate tasks, no cross-user replay | `201` + `201`, different ids |
+| alice replays her own key | byte-identical body | byte-identical |
+| Non-UUID key | `400` | `400 invalid_idempotency_key` |
+
+### G. Mass assignment / parameter tampering — ignored
+
+| Case | Result |
+|---|---|
+| `creator_id`, `id`, `assignee_id` in `POST /tasks` body | ignored: creator = token user, assignee = `null`, server id generated |
+| `team_id`, `creator_id` in `PUT /tasks/{id}` body | ignored: team stays as stored |
+| `owner_id` in `POST /teams` body | ignored: owner = token user |
+
+### H. Input abuse
+
+| Case | Expected | Actual |
+|---|---|---|
+| SQLi payload in `search` | `200`, no error leak | `200` |
+| Invalid enum in `status` | `422` | `422 invalid_request` |
+| Body larger than 1 MiB | `413` | `413 payload_too_large` |
+| Unknown JSON fields | ignored, `200` | `200` |
+
+### I. Response hygiene
+
+| Case | Result |
+|---|---|
+| Any response contains `password_hash` or a bcrypt hash | PASS — absent |
+| Any response contains `token_hash` | PASS — absent |
+| 5xx body | sanitized `{"status":500,"code":"internal_error","message":"internal server error",...}`, no stack trace |
+
+### J. Database integrity
+
+After the entire security run, no task titled `hijack` or `x` existed, and no task had been created by carol or mallory. Every rejected write created zero rows. Authorized operations wrote exactly the expected rows.
+
+### Findings (documented, not fixed)
+
+| # | Severity | Finding | Observed |
+|---|---|---|---|
+| S1 | Medium | Login runs bcrypt only when the email exists, so an unknown email answers faster | known-email wrong-password avg `0.0555s` vs unknown-email avg `0.0037s` (15x); user enumeration oracle |
+| S2 | Medium | No login rate limiting or lockout | 20 consecutive wrong-password attempts all returned `401`, no `429` |
+| S3 | Low | `POST /auth/logout` returns `401` for an unknown refresh token | confirmed `401 unauthorized` |
+| S4 | Info | Concurrent duplicate `POST /teams/{id}/members` | 12 concurrent adds: `201` x1, `409` x11, no `500` — the previously suspected `500` did not reproduce |
+| S5 | Info | Removing a team member does not revoke their identity-based task access | by design; task access is creator/assignee scoped |
+| S6 | Info | Access token in the refresh body is rejected at `422` validation instead of `401` | still rejected, no security impact |
+
+Concurrent idempotency was also exercised over HTTP: 16 concurrent `POST /tasks` with one key produced exactly one unique task id.
 
 ## 11. Known limitations
 
@@ -242,4 +326,4 @@ Recorded gaps (not IDOR, left as follow-ups):
 
 ## Conclusion
 
-Every endpoint in the case study works, all response envelopes are consistent and snake_case, idempotency is race-safe, the assignment transaction is atomic, logging is structured with correct levels, and the unit suite runs without a database. Only the recruiter email remains.
+Every endpoint in the case study works, all response envelopes are consistent and snake_case, idempotency is race-safe, the assignment transaction is atomic, logging is structured with correct levels, and the unit suite runs without a database. The adversarial pass found no IDOR, no cross-user data leak, no mass assignment, and no token-forgery bypass. The remaining items are hardening follow-ups (login timing, rate limiting) and the recruiter email.
