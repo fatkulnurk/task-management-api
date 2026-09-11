@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	applicationtoken "taskmanagement/internal/application/token"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -12,7 +13,7 @@ type TokenService struct {
 	ttl    time.Duration
 }
 
-func New(secret string) *TokenService {
+func New(secret string) applicationtoken.TokenService {
 	return &TokenService{
 		[]byte(secret),
 		15 * time.Minute,

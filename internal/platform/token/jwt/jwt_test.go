@@ -2,6 +2,7 @@ package jwt
 
 import (
 	"context"
+	applicationtoken "taskmanagement/internal/application/token"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestVerifyRejects(t *testing.T) {
 	tests := []struct {
 		name     string
 		token    string
-		verifier *TokenService
+		verifier applicationtoken.TokenService
 	}{
 		{name: "alg none", token: noneRaw, verifier: New(testSecret)},
 		{name: "alg hs384", token: hs384Raw, verifier: New(testSecret)},
