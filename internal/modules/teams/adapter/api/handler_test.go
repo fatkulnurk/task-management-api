@@ -79,7 +79,7 @@ func TestHandlerCreate(t *testing.T) {
 					Create(gomock.Any(), gomock.Any()).
 					Return(domain.Team{}, errTest)
 			},
-			wantStatus: http.StatusUnprocessableEntity,
+			wantStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -428,6 +428,15 @@ func TestHandlerRemove(t *testing.T) {
 					Return(domain.ErrOwner)
 			},
 			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "member has active assignments",
+			setup: func(service *domainmocks.MockService) {
+				service.EXPECT().
+					Remove(gomock.Any(), gomock.Any()).
+					Return(domain.ErrAssignments)
+			},
+			wantStatus: http.StatusConflict,
 		},
 		{
 			name: "not found",
